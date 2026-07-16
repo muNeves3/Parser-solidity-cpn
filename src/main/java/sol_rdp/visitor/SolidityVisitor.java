@@ -153,7 +153,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         
         info.adicionarFuncao(funcao);
         
-        analisarBloco(ctx.getText());
+        if (ctx.body != null) {
+            analisarBloco(ctx.body.getText());
+        }
         
         funcaoAtual = "";
         return null;
@@ -224,13 +226,18 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         
         info.adicionarFuncao(funcao);
         
-        analisarBloco(ctx.getText());
+        if (ctx.body != null) {
+            analisarBloco(ctx.body.getText());
+        }
         
         funcaoAtual = "";
         return visitChildren(ctx);
     }
 
     private void analisarBloco(String blocoTexto) {
+        if (blocoTexto == null || blocoTexto.isEmpty()) {
+            return;
+        }
         extrairRequires(blocoTexto);
         extrairAsserts(blocoTexto);
         extrairOperacoes(blocoTexto);
@@ -238,41 +245,86 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     }
 
     private void extrairRequires(String texto) {
-        Pattern pattern = Pattern.compile("require\\s*\\(([^)]*)\\)");
-        Matcher matcher = pattern.matcher(texto);
-        
-        while (matcher.find()) {
-            String expressao = matcher.group(1);
-            if (expressao.contains(",")) {
-                expressao = expressao.split(",")[0];
-            }
-            Condicional cond = new Condicional("require", expressao.trim(), funcaoAtual, 0);
-            info.adicionarCondicional(cond);
-        }
+        extrairCondicionais(texto, "require");
     }
 
     private void extrairAsserts(String texto) {
-        Pattern pattern = Pattern.compile("assert\\s*\\(([^)]*)\\)");
-        Matcher matcher = pattern.matcher(texto);
-        
-        while (matcher.find()) {
-            String expressao = matcher.group(1);
-            Condicional cond = new Condicional("assert", expressao.trim(), funcaoAtual, 0);
-            info.adicionarCondicional(cond);
+        extrairCondicionais(texto, "assert");
+    }
+
+    private void extrairCondicionais(String texto, String palavraChave) {
+        String marcador = palavraChave + "(";
+        int inicio = 0;
+
+        while (inicio < texto.length()) {
+            int pos = texto.indexOf(marcador, inicio);
+            if (pos < 0) {
+                break;
+            }
+
+            int abertura = pos + marcador.length() - 1;
+            int profundidade = 0;
+            int i = abertura + 1;
+            boolean encontrouFechamento = false;
+
+            for (; i < texto.length(); i++) {
+                char c = texto.charAt(i);
+                if (c == '(') {
+                    profundidade++;
+                } else if (c == ')') {
+                    if (profundidade == 0) {
+                        encontrouFechamento = true;
+                        break;
+                    }
+                    profundidade--;
+                }
+            }
+
+            if (!encontrouFechamento) {
+                break;
+            }
+
+            String conteudo = texto.substring(abertura + 1, i).trim();
+            int indiceVirgulaTopo = encontrarVirgulaTopo(conteudo);
+            if (indiceVirgulaTopo >= 0) {
+                conteudo = conteudo.substring(0, indiceVirgulaTopo).trim();
+            }
+
+            info.adicionarCondicional(new Condicional(palavraChave, conteudo, funcaoAtual, 0));
+            inicio = i + 1;
         }
     }
 
+    private int encontrarVirgulaTopo(String texto) {
+        int profundidade = 0;
+        for (int i = 0; i < texto.length(); i++) {
+            char c = texto.charAt(i);
+            if (c == '(' || c == '[' || c == '{') {
+                profundidade++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                if (profundidade > 0) {
+                    profundidade--;
+                }
+            } else if (c == ',' && profundidade == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void extrairOperacoes(String texto) {
-        Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\s*([+\\-*/%]?=)\\s*([^;=]*)");
+        Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\]|\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*([+\\-*/%]?=)\\s*([^;=]*)");
         Matcher matcher = pattern.matcher(texto);
         
         Set<String> jaProcessadas = new HashSet<>();
         while (matcher.find()) {
-            String varDestino = matcher.group(1);
+            String varDestinoCompleto = matcher.group(1);
+            String varDestino = extrairNomeBaseVariavel(varDestinoCompleto);
             String operador = matcher.group(2);
             String lado_direito = matcher.group(3).trim();
             
-            if (!varDestino.equals("require") && !varDestino.equals("assert") && !jaProcessadas.contains(varDestino + operador + lado_direito)) {
+            if (!varDestino.isEmpty() && !varDestino.equals("require") && !varDestino.equals("assert")
+                    && !jaProcessadas.contains(varDestino + operador + lado_direito)) {
                 List<String> operandos = new ArrayList<>();
                 operandos.add(lado_direito);
                 
@@ -292,7 +344,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             String nomeFuncaoAlvo = matcher.group(1);
             String args = matcher.group(2);
             
-            if (!nomeFuncaoAlvo.equals("require") && !nomeFuncaoAlvo.equals("assert") && !jaProcessadas.contains(nomeFuncaoAlvo)) {
+            if (!deveIgnorarChamada(nomeFuncaoAlvo) && !jaProcessadas.contains(nomeFuncaoAlvo)) {
                 List<String> argumentos = new ArrayList<>();
                 if (!args.isEmpty()) {
                     for (String arg : args.split(",")) {
@@ -305,5 +357,33 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 jaProcessadas.add(nomeFuncaoAlvo);
             }
         }
+    }
+
+    private boolean deveIgnorarChamada(String nomeFuncaoAlvo) {
+        if (nomeFuncaoAlvo == null || nomeFuncaoAlvo.isEmpty()) {
+            return true;
+        }
+
+        if (nomeFuncaoAlvo.equals("require") || nomeFuncaoAlvo.equals("assert") || nomeFuncaoAlvo.equals("emit")) {
+            return true;
+        }
+
+        if (nomeFuncaoAlvo.startsWith("emit")) {
+            return true;
+        }
+
+        return nomeFuncaoAlvo.matches("(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?|address|bool|string|fixed|ufixed)");
+    }
+
+    private String extrairNomeBaseVariavel(String expr) {
+        if (expr == null) {
+            return "";
+        }
+
+        Matcher matcher = Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_]*)").matcher(expr.trim());
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return "";
     }
 }

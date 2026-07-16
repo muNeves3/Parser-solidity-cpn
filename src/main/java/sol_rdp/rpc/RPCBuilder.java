@@ -125,7 +125,7 @@ public class RPCBuilder {
             }
             
             Set<String> variaveisUsadas = variavelsPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
-            
+
             for (String nomeVar : variaveisUsadas) {
                 Lugar lugarVar = lugaresVariaveis.get(nomeVar);
                 if (lugarVar != null) {
