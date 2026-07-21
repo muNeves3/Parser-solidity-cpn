@@ -65,11 +65,12 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             tipo = ctx.typeName().getText();
         }
         
-        // Extrair nome e visibilidade
         String nome = "";
         String visibilidade = "internal";
-        
-        // Procurar por palavras-chave de visibilidade no texto
+        String tipoIndice = extrairTipoIndice(ctx.typeName());
+
+        System.out.println(ctx.typeName());
+
         if (texto.contains("public")) {
             visibilidade = "public";
         } else if (texto.contains("private")) {
@@ -86,7 +87,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             semTipo = texto.replaceFirst(Pattern.quote(tipo), "").trim();
         }
         
-        // Remove visibilidade
         semTipo = semTipo.replaceAll("public|private|internal|external|constant|immutable", "").trim();
         
         // O primeiro token restante é o nome
@@ -103,14 +103,13 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             }
         }
         
-        // Extrair valor inicial
         String valorInicial = "";
         if (ctx.expression() != null) {
             valorInicial = ctx.expression().getText();
         }
         
         if (!nome.isEmpty() && !tipo.isEmpty()) {
-            VariavelGlobal var = new VariavelGlobal(nome, tipo, visibilidade, valorInicial, "");
+            VariavelGlobal var = new VariavelGlobal(nome, tipo, visibilidade, valorInicial, tipoIndice);
             info.adicionarVariavelGlobal(var);
         }
         
@@ -384,6 +383,24 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (matcher.find()) {
             return matcher.group(1);
         }
+        return "";
+    }
+
+    private String extrairTipoIndice(SolidityParser.TypeNameContext typeNameCtx) {
+        if (typeNameCtx == null) {
+            return "";
+        }
+
+        SolidityParser.MappingTypeContext mappingTypeCtx = typeNameCtx.mappingType();
+        if (mappingTypeCtx != null && mappingTypeCtx.mappingKeyType() != null) {
+            return mappingTypeCtx.mappingKeyType().getText().trim();
+        }
+
+        SolidityParser.TypeNameContext tipoInterno = typeNameCtx.typeName();
+        if (tipoInterno != null) {
+            return extrairTipoIndice(tipoInterno);
+        }
+
         return "";
     }
 }
