@@ -33,43 +33,38 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             contratoAtual = ctx.identifier().getText();
             info.setNomeContrato(contratoAtual);
         }
-        
-        // Processar os elementos do contrato (contractBodyElement*)
+
         for (int i = 0; i < ctx.contractBodyElement().size(); i++) {
             SolidityParser.ContractBodyElementContext element = ctx.contractBodyElement(i);
-            
-            // Verificar se é uma variável de estado
+
             if (element.stateVariableDeclaration() != null) {
                 visitStateVariableDeclaration(element.stateVariableDeclaration());
-            }
-            // Verificar se é um construtor
-            else if (element.constructorDefinition() != null) {
+            } else if (element.constructorDefinition() != null) {
                 visitConstructorDefinition(element.constructorDefinition());
-            }
-            // Verificar se é uma função
-            else if (element.functionDefinition() != null) {
+            } else if (element.functionDefinition() != null) {
                 visitFunctionDefinition(element.functionDefinition());
             }
         }
-        
+
         return null;
     }
 
     @Override
     public Object visitStateVariableDeclaration(SolidityParser.StateVariableDeclarationContext ctx) {
         String texto = ctx.getText();
-        
-        // Extrair tipo usando typeName() do ANTLR
+
+        String tipoBruto = "";
         String tipo = "";
+        String tipoIndice = "";
+
         if (ctx.typeName() != null) {
-            tipo = ctx.typeName().getText();
+            tipoBruto = ctx.typeName().getText();
+            tipoIndice = extrairTipoIndice(ctx.typeName());
+            tipo = extrairTipoValor(ctx.typeName());
         }
-        
+
         String nome = "";
         String visibilidade = "internal";
-        String tipoIndice = extrairTipoIndice(ctx.typeName());
-
-        System.out.println(ctx.typeName());
 
         if (texto.contains("public")) {
             visibilidade = "public";
@@ -80,15 +75,17 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         } else if (texto.contains("internal")) {
             visibilidade = "internal";
         }
-        
-        // Extrair nome - remove tipo do início e procura o primeiro identificador válido após visibilidade
+
+        // 2. Extrair nome usando o tipoBruto para a limpeza
         String semTipo = texto;
-        if (!tipo.isEmpty()) {
+        if (!tipoBruto.isEmpty()) {
+            semTipo = texto.replaceFirst(Pattern.quote(tipoBruto), "").trim();
+        } else if (!tipo.isEmpty()) {
             semTipo = texto.replaceFirst(Pattern.quote(tipo), "").trim();
         }
-        
+
         semTipo = semTipo.replaceAll("public|private|internal|external|constant|immutable", "").trim();
-        
+
         // O primeiro token restante é o nome
         if (!semTipo.isEmpty()) {
             String[] partes = semTipo.split(";")[0].split("[=,]");
@@ -96,37 +93,75 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             // Extrair apenas identificador válido
             if (primeiraParte.matches(".*[a-zA-Z_][a-zA-Z0-9_]*.*")) {
                 nome = primeiraParte.replaceAll("[^a-zA-Z0-9_]", "");
-                // Se não conseguiu, tenta outro método
                 if (nome.isEmpty() || nome.length() < 1) {
                     nome = primeiraParte.trim();
                 }
             }
         }
-        
+
         String valorInicial = "";
         if (ctx.expression() != null) {
             valorInicial = ctx.expression().getText();
         }
-        
+
         if (!nome.isEmpty() && !tipo.isEmpty()) {
             VariavelGlobal var = new VariavelGlobal(nome, tipo, visibilidade, valorInicial, tipoIndice);
             info.adicionarVariavelGlobal(var);
         }
-        
+
         return null;
+    }
+
+    private String extrairTipoValor(SolidityParser.TypeNameContext typeNameCtx) {
+        if (typeNameCtx == null) {
+            return "";
+        }
+
+        SolidityParser.MappingTypeContext mappingTypeCtx = typeNameCtx.mappingType();
+        if (mappingTypeCtx != null && mappingTypeCtx.typeName() != null) {
+            return extrairTipoValor(mappingTypeCtx.typeName());
+        }
+
+        String textoTipo = typeNameCtx.getText().trim();
+        if (textoTipo.endsWith("]")) {
+            int indexColchete = textoTipo.indexOf('[');
+            if (indexColchete > 0) {
+                return textoTipo.substring(0, indexColchete);
+            }
+        }
+
+        return textoTipo;
+    }
+
+    private String extrairTipoIndice(SolidityParser.TypeNameContext typeNameCtx) {
+        if (typeNameCtx == null) {
+            return "";
+        }
+
+        SolidityParser.MappingTypeContext mappingTypeCtx = typeNameCtx.mappingType();
+        if (mappingTypeCtx != null && mappingTypeCtx.mappingKeyType() != null) {
+            return mappingTypeCtx.mappingKeyType().getText().trim();
+        }
+
+        String textoTipo = typeNameCtx.getText().trim();
+        if (textoTipo.endsWith("]")) {
+            return "int";
+        }
+
+        return "";
     }
 
     public Object visitConstructorDefinition(SolidityParser.ConstructorDefinitionContext ctx) {
         String nomeFuncao = "constructor";
         funcaoAtual = nomeFuncao;
-        
+
         String visibilidade = "internal";
         Map<String, String> parametros = new HashMap<>();
         List<String> nomesRetorno = new ArrayList<>();
         List<String> tiposRetorno = new ArrayList<>();
         List<String> modifiers = new ArrayList<>();
         boolean isConstructor = true;
-        
+
         // Extrair parâmetros
         if (ctx.arguments != null) {
             for (SolidityParser.ParameterDeclarationContext paramDecl : ctx.arguments.parameters) {
@@ -141,21 +176,20 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 parametros.put(nomeParam, tipoParam);
             }
         }
-        
+
         int linhaInicio = ctx.getStart().getLine();
         int linhaFim = ctx.getStop().getLine();
-        
+
         FuncaoSolidity funcao = new FuncaoSolidity(
                 nomeFuncao, nomesRetorno, tiposRetorno, visibilidade, parametros,
-                linhaInicio, linhaFim, modifiers, isConstructor
-        );
-        
+                linhaInicio, linhaFim, modifiers, isConstructor);
+
         info.adicionarFuncao(funcao);
-        
+
         if (ctx.body != null) {
             analisarBloco(ctx.body.getText());
         }
-        
+
         funcaoAtual = "";
         return null;
     }
@@ -166,20 +200,20 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (ctx.identifier() != null) {
             nomeFuncao = ctx.identifier().getText();
         }
-        
+
         if (nomeFuncao.isEmpty()) {
             nomeFuncao = "constructor";
         }
-        
+
         funcaoAtual = nomeFuncao;
-        
+
         String visibilidade = "internal";
         Map<String, String> parametros = new HashMap<>();
         List<String> nomesRetorno = new ArrayList<>();
         List<String> tiposRetorno = new ArrayList<>();
         List<String> modifiers = new ArrayList<>();
         boolean isConstructor = nomeFuncao.equals("constructor");
-        
+
         String texto = ctx.getText();
         if (texto.contains("public")) {
             visibilidade = "public";
@@ -203,7 +237,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 parametros.put(nomeParam, tipoParam);
             }
         }
-        
 
         if (texto.contains("view")) {
             modifiers.add("view");
@@ -214,21 +247,20 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (texto.contains("payable")) {
             modifiers.add("payable");
         }
-        
+
         int linhaInicio = ctx.getStart().getLine();
         int linhaFim = ctx.getStop().getLine();
-        
+
         FuncaoSolidity funcao = new FuncaoSolidity(
                 nomeFuncao, nomesRetorno, tiposRetorno, visibilidade, parametros,
-                linhaInicio, linhaFim, modifiers, isConstructor
-        );
-        
+                linhaInicio, linhaFim, modifiers, isConstructor);
+
         info.adicionarFuncao(funcao);
-        
+
         if (ctx.body != null) {
             analisarBloco(ctx.body.getText());
         }
-        
+
         funcaoAtual = "";
         return visitChildren(ctx);
     }
@@ -237,10 +269,25 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (blocoTexto == null || blocoTexto.isEmpty()) {
             return;
         }
-        extrairRequires(blocoTexto);
-        extrairAsserts(blocoTexto);
+        extrairCondicionais(blocoTexto, "require");
+        extrairCondicionais(blocoTexto, "assert");
+        extrairCondicionais(blocoTexto, "if");
         extrairOperacoes(blocoTexto);
         extrairChamadas(blocoTexto);
+
+        if (blocoTexto.contains("msg.sender")) {
+            registrarVariavelEVM("msg.sender", "address");
+        }
+        if (blocoTexto.contains("msg.value")) {
+            registrarVariavelEVM("msg.value", "uint");
+        }
+    }
+
+    private void registrarVariavelEVM(String nome, String tipo) {
+        boolean existe = info.getVariaveisGlobais().stream().anyMatch(v -> v.getNome().equals(nome));
+        if (!existe) {
+            info.adicionarVariavelGlobal(new VariavelGlobal(nome, tipo, "internal", "", ""));
+        }
     }
 
     private void extrairRequires(String texto) {
@@ -312,24 +359,37 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     }
 
     private void extrairOperacoes(String texto) {
-        Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\]|\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*([+\\-*/%]?=)\\s*([^;=]*)");
+        // RegEx ignora conteúdo dentro de require, assert e if
+        Pattern pattern = Pattern.compile(
+                "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\]|\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*([+\\-*/%]?=)\\s*([^;]+)");
         Matcher matcher = pattern.matcher(texto);
-        
+
         Set<String> jaProcessadas = new HashSet<>();
         while (matcher.find()) {
-            String varDestinoCompleto = matcher.group(1);
-            String varDestino = extrairNomeBaseVariavel(varDestinoCompleto);
-            String operador = matcher.group(2);
-            String lado_direito = matcher.group(3).trim();
-            
-            if (!varDestino.isEmpty() && !varDestino.equals("require") && !varDestino.equals("assert")
-                    && !jaProcessadas.contains(varDestino + operador + lado_direito)) {
+            String varDestinoCompleto = matcher.group(1).trim();
+            String operador = matcher.group(2).trim();
+            String ladoDireito = matcher.group(3).trim();
+
+            // Ignorar pseudo-variáveis nativas que caem aqui por engano
+            if (varDestinoCompleto.equals("msg") || varDestinoCompleto.equals("block"))
+                continue;
+
+            String assinatura = varDestinoCompleto + operador + ladoDireito;
+            if (!jaProcessadas.contains(assinatura)) {
                 List<String> operandos = new ArrayList<>();
-                operandos.add(lado_direito);
-                
-                OperacaoSolidity op = new OperacaoSolidity(varDestino, operador, operandos, 0, funcaoAtual);
+
+                // Extrai as variáveis individuais do lado direito da equação
+                Matcher varMatcher = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*").matcher(ladoDireito);
+                while (varMatcher.find()) {
+                    String varStr = varMatcher.group();
+                    if (!varStr.matches("^[0-9]+$")) {
+                        operandos.add(varStr);
+                    }
+                }
+
+                OperacaoSolidity op = new OperacaoSolidity(varDestinoCompleto, operador, operandos, 0, funcaoAtual);
                 info.adicionarOperacao(op);
-                jaProcessadas.add(varDestino + operador + lado_direito);
+                jaProcessadas.add(assinatura);
             }
         }
     }
@@ -337,12 +397,12 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     private void extrairChamadas(String texto) {
         Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
         Matcher matcher = pattern.matcher(texto);
-        
+
         Set<String> jaProcessadas = new HashSet<>();
         while (matcher.find()) {
             String nomeFuncaoAlvo = matcher.group(1);
             String args = matcher.group(2);
-            
+
             if (!deveIgnorarChamada(nomeFuncaoAlvo) && !jaProcessadas.contains(nomeFuncaoAlvo)) {
                 List<String> argumentos = new ArrayList<>();
                 if (!args.isEmpty()) {
@@ -350,7 +410,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                         argumentos.add(arg.trim());
                     }
                 }
-                
+
                 ChamadaFuncao chamada = new ChamadaFuncao(funcaoAtual, nomeFuncaoAlvo, argumentos, 0);
                 info.adicionarChamada(chamada);
                 jaProcessadas.add(nomeFuncaoAlvo);
@@ -362,16 +422,16 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (nomeFuncaoAlvo == null || nomeFuncaoAlvo.isEmpty()) {
             return true;
         }
-
-        if (nomeFuncaoAlvo.equals("require") || nomeFuncaoAlvo.equals("assert") || nomeFuncaoAlvo.equals("emit")) {
+        if (nomeFuncaoAlvo.equals("require") || nomeFuncaoAlvo.equals("assert") ||
+                nomeFuncaoAlvo.equals("revert") || nomeFuncaoAlvo.equals("if") ||
+                nomeFuncaoAlvo.equals("while") || nomeFuncaoAlvo.equals("for")) {
             return true;
         }
-
         if (nomeFuncaoAlvo.startsWith("emit")) {
             return true;
         }
-
-        return nomeFuncaoAlvo.matches("(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?|address|bool|string|fixed|ufixed)");
+        return nomeFuncaoAlvo.matches(
+                "(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?|address|bool|string|fixed|ufixed)");
     }
 
     private String extrairNomeBaseVariavel(String expr) {

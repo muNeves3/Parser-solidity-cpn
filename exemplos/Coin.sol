@@ -1,5 +1,5 @@
 contract Coin {
-    addres public minter;
+    address public minter;
     mapping(address => uint) public balances;
 
     event Sent(address from, address to, uint amount);
