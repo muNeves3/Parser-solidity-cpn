@@ -27,7 +27,6 @@ SolidityParser$StructDefinitionContext.class
 SolidityParser$ParameterDeclarationContext.class
 sol_rdp/antlr/SolidityParser$UnaryPrefixOperationContext.class
 SolidityParser$EventParameterContext.class
-sol_rdp/cpn/Arco.class
 sol_rdp/antlr/SolidityParser$UserDefinableOperatorContext.class
 sol_rdp/antlr/SolidityParser$InheritanceSpecifierListContext.class
 SolidityParser$DataLocationContext.class
@@ -56,7 +55,6 @@ sol_rdp/antlr/SolidityParser$EventDefinitionContext.class
 SolidityParser$IdentifierPathContext.class
 sol_rdp/antlr/SolidityParser$IndexAccessContext.class
 SolidityParser$EnumDefinitionContext.class
-sol_rdp/solidity/Condicional.class
 SolidityParser$YulStatementContext.class
 sol_rdp/antlr/SolidityParser$MappingTypeContext.class
 SolidityParser$TupleContext.class
@@ -77,7 +75,6 @@ sol_rdp/antlr/SolidityParser$AssemblyFlagsContext.class
 SolidityParser$AddSubOperationContext.class
 sol_rdp/antlr/SolidityParser$ElementaryTypeNameContext.class
 sol_rdp/antlr/SolidityParser$AndOperationContext.class
-sol_rdp/cpn/Lugar.class
 SolidityParser$PathContext.class
 SolidityParser$InlineArrayExpressionContext.class
 sol_rdp/antlr/SolidityParser$PragmaDirectiveContext.class
@@ -89,7 +86,6 @@ sol_rdp/antlr/SolidityParser$ContractBodyElementContext.class
 sol_rdp/antlr/SolidityParser$UnicodeStringLiteralContext.class
 sol_rdp/antlr/SolidityParser$NumberLiteralContext.class
 SolidityParser$MulDivModOperationContext.class
-sol_rdp/solidity/VariavelGlobal.class
 SolidityParser$YulAssignmentContext.class
 SolidityParser$TryStatementContext.class
 SolidityParser$BlockContext.class
@@ -107,14 +103,12 @@ sol_rdp/antlr/SolidityParser$YulSwitchStatementContext.class
 sol_rdp/antlr/SolidityParser$SourceUnitContext.class
 sol_rdp/antlr/SolidityParser$BlockContext.class
 SolidityParser$FallbackFunctionDefinitionContext.class
-sol_rdp/solidity/OperacaoSolidity.class
 sol_rdp/antlr/SolidityParser$BitAndOperationContext.class
 SolidityParser$ElementaryTypeNameContext.class
 SolidityParser$SourceUnitContext.class
 sol_rdp/antlr/SolidityParser$ContinueStatementContext.class
 SolidityParser$LiteralContext.class
 sol_rdp/antlr/SolidityParser$FallbackFunctionDefinitionContext.class
-sol_rdp/App.class
 SolidityParser$VariableDeclarationTupleContext.class
 SolidityParser$IndexAccessContext.class
 SolidityParser$BreakStatementContext.class
@@ -123,7 +117,6 @@ SolidityParser$UnicodeStringLiteralContext.class
 sol_rdp/antlr/SolidityParser$FunctionCallContext.class
 sol_rdp/antlr/SolidityParser$UsingAliasesContext.class
 sol_rdp/antlr/SolidityParser$UnarySuffixOperationContext.class
-sol_rdp/visitor/SolidityVisitor.class
 SolidityParser$IndexRangeAccessContext.class
 SolidityParser$InterfaceDefinitionContext.class
 SolidityParser$FunctionTypeNameContext.class
@@ -156,7 +149,6 @@ SolidityParser$NamedArgumentContext.class
 SolidityParser$NewExprContext.class
 SolidityParser$ForStatementContext.class
 sol_rdp/antlr/SolidityParser$YulSwitchCaseContext.class
-sol_rdp/cpn/Transicao.class
 sol_rdp/antlr/SolidityParser$YulIfStatementContext.class
 sol_rdp/antlr/SolidityParser$AddSubOperationContext.class
 SolidityParser$FunctionDefinitionContext.class
@@ -196,7 +188,6 @@ sol_rdp/antlr/SolidityParser$MappingKeyTypeContext.class
 SolidityParser$TupleExpressionContext.class
 SolidityParser$YulboolContext.class
 sol_rdp/antlr/SolidityParser$BoolLiteralContext.class
-sol_rdp/rpc/RPCBuilder.class
 SolidityParser$AssemblyFlagsContext.class
 SolidityParser$AndOperationContext.class
 sol_rdp/antlr/SolidityParser$LibraryDefinitionContext.class
@@ -213,9 +204,7 @@ sol_rdp/antlr/SolidityParser$RevertStatementContext.class
 sol_rdp/antlr/SolidityParser$MetaTypeContext.class
 sol_rdp/antlr/SolidityParser.class
 SolidityParser$TypeNameContext.class
-sol_rdp/solidity/ListasInfo.class
 sol_rdp/antlr/SolidityParserVisitor.class
-sol_rdp/solidity/ChamadaFuncao.class
 SolidityParser$LiteralWithSubDenominationContext.class
 SolidityParser$IfStatementContext.class
 SolidityParser$OrderComparisonContext.class
@@ -254,7 +243,6 @@ SolidityParser$YulExpressionContext.class
 sol_rdp/antlr/SolidityParser$YulAssignmentContext.class
 SolidityParser$MappingKeyTypeContext.class
 SolidityParser$NumberLiteralContext.class
-sol_rdp/solidity/FuncaoSolidity.class
 sol_rdp/antlr/SolidityParser$EmitStatementContext.class
 sol_rdp/antlr/SolidityParser$UncheckedBlockContext.class
 sol_rdp/antlr/SolidityParser$CallArgumentListContext.class

@@ -13,6 +13,7 @@ public class RPCBuilder {
     private Map<String, Lugar> lugaresVariaveis;
     private Map<String, Transicao> transicoesFunc;
     private int idCounter;
+    private Map<String, GerenciadorVariaveis> gerenciadoresLocais;
 
     public RPCBuilder() {
         this.lugares = new ArrayList<>();
@@ -21,6 +22,7 @@ public class RPCBuilder {
         this.lugaresVariaveis = new HashMap<>();
         this.transicoesFunc = new HashMap<>();
         this.idCounter = 0;
+        this.gerenciadoresLocais = new HashMap<>();
     }
 
     public void construirRPC(ListasInfo info) {
@@ -39,6 +41,7 @@ public class RPCBuilder {
 
         for (FuncaoSolidity func : info.getFuncoes()) {
             boolean temParametros = !func.getParametros().isEmpty();
+            // Apenas public e external são oráculos. Construtor NUNCA é oráculo.
             boolean isOracle = (func.getVisibilidade().equals("public") || func.getVisibilidade().equals("external"))
                     && !func.isConstructor();
 
@@ -53,7 +56,7 @@ public class RPCBuilder {
                     StringBuilder tipos = new StringBuilder();
                     for (String tipo : func.getParametros().values()) {
                         if (tipos.length() > 0)
-                            tipos.append("x");
+                            tipos.append("x"); // Produto cartesiano de cores
                         tipos.append(mapearTipoParaColorSet(tipo, ""));
                     }
                     tiposColorSet = tipos.toString();
@@ -103,44 +106,6 @@ public class RPCBuilder {
         return corValor;
     }
 
-    // private String gerarExpressaoArco(String colorSet, GerenciadorVariaveis ger)
-    // {
-    // if (!colorSet.contains("x")) {
-    // return ger.getNovaVariavel(colorSet);
-    // }
-
-    // // Se for um produto (ex: ADDRESSxUINT), quebra e monta a tupla (ex: "(Z,
-    // E)")
-    // String[] cores = colorSet.split("x");
-    // StringBuilder expr = new StringBuilder("(");
-    // for (int i = 0; i < cores.length; i++) {
-    // if (i > 0)
-    // expr.append(", ");
-    // expr.append(ger.getNovaVariavel(cores[i]));
-    // }
-    // expr.append(")");
-
-    // return expr.toString();
-    // }
-
-    private String gerarExpressaoArcoBase(String colorSet, GerenciadorVariaveis ger, String nomeVariavelOrigem) {
-        if (!colorSet.contains("x")) {
-            return ger.getOuCriarVariavel(nomeVariavelOrigem, colorSet);
-        }
-
-        // Para mappings (ex: ADDRESSxUINT)
-        String[] cores = colorSet.split("x");
-        StringBuilder expr = new StringBuilder("(");
-
-        // O primeiro elemento é o índice, o segundo é o valor
-        expr.append(ger.getOuCriarVariavel(nomeVariavelOrigem + "_idx", cores[0]));
-        expr.append(", ");
-        expr.append(ger.getOuCriarVariavel(nomeVariavelOrigem + "_val", cores[1]));
-        expr.append(")");
-
-        return expr.toString();
-    }
-
     private String mapearTipoSimples(String tipo) {
         if (tipo == null || tipo.isEmpty())
             return "ANY";
@@ -182,58 +147,24 @@ public class RPCBuilder {
         }
     }
 
-    private void criarArcosFluxoDados(ListasInfo info) {
-        System.out.println("\n--- Criando Arcos de Fluxo de Dados ---");
+    private void criarArcosDeChamadas(ListasInfo info) {
+        for (ChamadaFuncao chamada : info.getChamadas()) {
+            Transicao transChamadora = transicoesFunc.get(chamada.getNomeFuncaoChamadora());
+            Lugar lugarAlvo = lugaresVariaveis.get("par-" + chamada.getNomeFuncaoAlvo());
 
-        Map<String, Set<String>> variaveisPorFuncao = mapearVariaveisAFuncoes(info);
+            if (transChamadora != null && lugarAlvo != null) {
+                // Monta a tupla (Z, E) ou a variável simples Z
+                GerenciadorVariaveis gerLocal = gerenciadoresLocais.get(chamada.getNomeFuncaoChamadora());
+                String expressaoArco = lugarAlvo.getColorSet().contains("x") ? "(Z, E)" : "Z";
 
-        for (FuncaoSolidity func : info.getFuncoes()) {
-            Transicao trans = transicoesFunc.get(func.getNome());
-            if (trans == null)
-                continue;
+                // Aplica a condicional na chamada (ex: D != Y -> NULL; D == Y -> (Z, E))
+                // isChamadaInterna = true
+                String expressaoFinal = aplicarCondicionaisRPC(expressaoArco, expressaoArco, transChamadora.getName(),
+                        info, gerLocal, true);
 
-            // Inicia um pool de variáveis zerado para esta transição
-            GerenciadorVariaveis gerVariaveis = new GerenciadorVariaveis();
-
-            Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
-            for (String nomeVar : variaveisUsadas) {
-                Lugar lugarVar = lugaresVariaveis.get(nomeVar);
-                if (lugarVar != null) {
-                    criarArcoDuplo(lugarVar, trans, gerVariaveis, func, info);
-                }
+                arcos.add(new Arco(gerarId("arco_chamada"), transChamadora.getId(), lugarAlvo.getId(), expressaoFinal));
             }
-
-            criarArcosParametros(func, trans);
         }
-    }
-
-    private void criarArcoDuplo(Lugar lugar, Transicao transicao, GerenciadorVariaveis ger, FuncaoSolidity func,
-            ListasInfo info) {
-        String arcoId1 = gerarId("arco");
-        String arcoId2 = gerarId("arco");
-
-        String expressaoEntrada = gerarExpressaoArcoBase(lugar.getColorSet(), ger, lugar.getName());
-        String expressaoSaida = expressaoEntrada;
-
-        OperacaoSolidity operacao = buscarOperacaoDaVariavel(lugar.getName(), func.getNome(), info);
-
-        if (operacao != null) {
-            expressaoSaida = traduzirOperacaoParaRPC(operacao, expressaoEntrada, ger);
-        }
-
-        String expressaoFinalSaida = aplicarCondicionaisRPC(expressaoSaida, expressaoEntrada, func.getNome(), info,
-                ger);
-
-        Arco arcoEntrada = new Arco(arcoId1, lugar.getId(), transicao.getId(), expressaoEntrada);
-        Arco arcoSaida = new Arco(arcoId2, transicao.getId(), lugar.getId(), expressaoFinalSaida);
-
-        arcos.add(arcoEntrada);
-        arcos.add(arcoSaida);
-
-        System.out.println(String.format("  Arco Entrada: %s -> %s (expr: %s)", lugar.getName(), transicao.getName(),
-                expressaoEntrada));
-        System.out.println(String.format("  Arco Saída:   %s -> %s (expr: %s)", transicao.getName(), lugar.getName(),
-                expressaoFinalSaida));
     }
 
     private OperacaoSolidity buscarOperacaoDaVariavel(String nomeVariavel, String nomeFuncao, ListasInfo info) {
@@ -249,83 +180,67 @@ public class RPCBuilder {
         String operador = op.getOperador();
         String ladoDireito = String.join(" ", op.getOperandos());
 
-        String exprMath = ladoDireito;
-        for (Map.Entry<String, String> entry : ger.getMapa().entrySet()) {
-            exprMath = exprMath.replaceAll("\\b" + entry.getKey() + "\\b", entry.getValue());
+        // Ordena as chaves pela maior primeiro para evitar substituições parciais
+        List<String> keys = new ArrayList<>(ger.getMapa().keySet());
+        keys.sort((a, b) -> b.length() - a.length());
+
+        for (String key : keys) {
+            ladoDireito = ladoDireito.replace(key, ger.getMapa().get(key));
         }
+        ladoDireito = ladoDireito.replaceAll("\\[.*?\\]", "").trim();
 
         if (expressaoEntrada.startsWith("(")) {
             String[] partes = expressaoEntrada.replace("(", "").replace(")", "").split(",");
             if (partes.length >= 2) {
-                String indice = partes[0].trim(); // Ex: Z
-                String valorAtual = partes[1].trim(); // Ex: F
+                String indice = partes[0].trim();
+                String valorAtual = partes[1].trim();
 
-                if (operador.equals("+=")) {
-                    return "(" + indice + ", " + valorAtual + " + " + exprMath.trim() + ")";
-                } else if (operador.equals("-=")) {
-                    return "(" + indice + ", " + valorAtual + " - " + exprMath.trim() + ")";
-                } else if (operador.equals("=")) {
-                    return "(" + indice + ", " + exprMath.trim() + ")";
-                }
+                if (operador.equals("+="))
+                    return "(" + indice + ", " + valorAtual + "+" + ladoDireito + ")";
+                if (operador.equals("-="))
+                    return "(" + indice + ", " + valorAtual + "-" + ladoDireito + ")";
+                if (operador.equals("="))
+                    return "(" + indice + ", " + ladoDireito + ")";
             }
         } else {
-            // Lógica para variáveis de estado simples (sem índice/tupla)
-            String valorAtual = expressaoEntrada;
-            if (operador.equals("+=")) {
-                return valorAtual + " + " + exprMath.trim();
-            } else if (operador.equals("-=")) {
-                return valorAtual + " - " + exprMath.trim();
-            } else if (operador.equals("=")) {
-                return exprMath.trim();
-            }
+            if (operador.equals("="))
+                return ladoDireito;
         }
-
         return expressaoEntrada;
     }
 
-    private void criarArcosDeChamadas(ListasInfo info) {
-        System.out.println("\n--- Criando Arcos de Chamadas Internas ---");
-        for (ChamadaFuncao chamada : info.getChamadas()) {
-            Transicao transChamadora = transicoesFunc.get(chamada.getNomeFuncaoChamadora());
-            Lugar lugarAlvo = lugaresVariaveis.get("par-" + chamada.getNomeFuncaoAlvo());
-
-            if (transChamadora != null && lugarAlvo != null) {
-                String arcoId = gerarId("arco");
-
-                // Mapeamento dos argumentos passados para a transição
-                String expressaoArco = lugarAlvo.getColorSet().contains("x") ? "(Z, E)" : "Z";
-
-                Arco arco = new Arco(arcoId, transChamadora.getId(), lugarAlvo.getId(), expressaoArco);
-                arcos.add(arco);
-                System.out.println(String.format("  Arco de Chamada: %s -> %s (expr: %s)", transChamadora.getName(),
-                        lugarAlvo.getName(), expressaoArco));
-            }
-        }
-    }
-
     private String aplicarCondicionaisRPC(String expressaoMutada, String expressaoOriginal, String nomeFuncao,
-            ListasInfo info, GerenciadorVariaveis ger) {
-        StringBuilder condFinal = new StringBuilder();
+            ListasInfo info, GerenciadorVariaveis ger, boolean isChamadaInterna) {
+        // Omite a condicional se a variável não sofreu alteração matemática (Para
+        // espelhar a imagem do TCC no caso 'minter')
+        if (expressaoMutada.equals(expressaoOriginal) && !isChamadaInterna) {
+            return expressaoOriginal;
+        }
 
         for (Condicional cond : info.getCondicionais()) {
-            if (cond.getNomeFuncao().equals(nomeFuncao)
-                    && (cond.getTipo().equals("if") || cond.getTipo().equals("require"))) {
+            if (cond.getNomeFuncao().equals(nomeFuncao)) {
                 String logica = cond.getExpressao();
 
-                // Traduz a lógica "amount <= balances" para "E <= F"
-                for (Map.Entry<String, String> entry : ger.getMapa().entrySet()) {
-                    logica = logica.replaceAll("\\b" + entry.getKey() + "\\b", entry.getValue());
+                List<String> keys = new ArrayList<>(ger.getMapa().keySet());
+                keys.sort((a, b) -> b.length() - a.length());
+                for (String key : keys) {
+                    logica = logica.replace(key, ger.getMapa().get(key));
                 }
-                logica = logica.replaceAll("\\[.*?\\]", ""); // Limpa chaves de array
-
-                // Exemplo do método: E > F -> NULL, E <= F -> (Y, F-E)
+                logica = logica.replaceAll("\\[.*?\\]", "").trim();
                 String oposto = inverterLogica(logica);
-                condFinal.append(oposto).append(" -> ")
-                        .append(cond.getTipo().equals("require") ? "NULL" : expressaoOriginal);
-                condFinal.append(", ");
-                condFinal.append(logica).append(" -> ").append(expressaoMutada);
 
-                return condFinal.toString();
+                if (isChamadaInterna) {
+                    if (cond.getTipo().equals("if")) {
+                        return logica + " -> NULL; " + oposto + " -> " + expressaoOriginal;
+                    }
+                    return oposto + " -> NULL; " + logica + " -> " + expressaoOriginal;
+                } else {
+                    if (cond.getTipo().equals("require") || cond.getTipo().equals("assert")) {
+                        return oposto + " -> NULL; " + logica + " -> " + expressaoMutada;
+                    } else { // 'if' funciona como um revert neste contrato
+                        return logica + " -> " + expressaoOriginal + "; " + oposto + " -> " + expressaoMutada;
+                    }
+                }
             }
         }
         return expressaoMutada;
@@ -347,21 +262,24 @@ public class RPCBuilder {
         return "!(" + logica + ")";
     }
 
-    private void criarArcosParametros(FuncaoSolidity func, Transicao trans) {
-        if (func.getVisibilidade().equals("public") || func.getVisibilidade().equals("external")
-                || func.isConstructor()) {
-            String nomeLugarOracle = "par-" + func.getNome();
+    private void criarArcosParametros(FuncaoSolidity func, Transicao trans, GerenciadorVariaveis ger) {
+        String nomeLugarOracle = "par-" + func.getNome();
+        for (Lugar lugar : lugares) {
+            if (lugar.getName().equals(nomeLugarOracle)) {
+                String arcoId = gerarId("arco");
+                String expressao;
 
-            for (Lugar lugar : lugares) {
-                if (lugar.getName().equals(nomeLugarOracle)) {
-                    String arcoId = gerarId("arco");
-                    Arco arco = new Arco(arcoId, lugar.getId(), trans.getId(), lugar.getColorSet());
-                    arcos.add(arco);
-
-                    System.out.println(String.format("  Arco Parâmetro: %s -> %s",
-                            lugar.getName(), trans.getName()));
-                    break;
+                if (func.isConstructor()) {
+                    expressao = ger.getOuCriarVariavel("param_constructor", "BOOL"); // Gera 'A'
+                } else {
+                    // Mapeia receiver (Z) e amount (E)
+                    String v1 = ger.getOuCriarVariavel("receiver", "ADDRESS");
+                    String v2 = ger.getOuCriarVariavel("amount", "UINT");
+                    expressao = "(" + v1 + ", " + v2 + ")";
                 }
+
+                arcos.add(new Arco(arcoId, lugar.getId(), trans.getId(), expressao));
+                break;
             }
         }
     }
@@ -369,50 +287,118 @@ public class RPCBuilder {
     private Map<String, Set<String>> mapearVariaveisAFuncoes(ListasInfo info) {
         Map<String, Set<String>> resultado = new HashMap<>();
 
-        // Extrair variáveis de operações
         for (OperacaoSolidity op : info.getOperacoes()) {
             String funcao = op.getNomeFuncao();
             resultado.putIfAbsent(funcao, new HashSet<>());
-            resultado.get(funcao).add(op.getVariavelDestino());
+            resultado.get(funcao).add(extrairNomeBase(op.getVariavelDestino()));
 
             for (String operando : op.getOperandos()) {
-                String varName = extrairNomeVariavel(operando);
-                if (!varName.isEmpty()) {
+                String varName = extrairNomeBase(operando);
+                if (!varName.isEmpty())
                     resultado.get(funcao).add(varName);
-                }
             }
         }
 
-        // Extrair variáveis de condicionais (require, assert, if)
         for (Condicional cond : info.getCondicionais()) {
             String funcao = cond.getNomeFuncao();
             resultado.putIfAbsent(funcao, new HashSet<>());
 
-            // Extrair todos os identificadores da expressão
-            String expressao = cond.getExpressao();
-            String[] tokens = expressao.split("[^a-zA-Z0-9_]");
-            for (String token : tokens) {
-                String varName = extrairNomeVariavel(token);
-                if (!varName.isEmpty() && !varName.equals("msg")) {
-                    resultado.get(funcao).add(varName);
+            // Regex atualizada para permitir o ponto (msg.sender)
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*")
+                    .matcher(cond.getExpressao());
+            while (m.find()) {
+                String varName = m.group();
+                if (!varName.equals("msg") && !varName.equals("block")) {
+                    resultado.get(funcao).add(extrairNomeBase(varName));
                 }
             }
         }
 
-        // Extrair variáveis de chamadas de função
         for (ChamadaFuncao chamada : info.getChamadas()) {
-            String funcaoChamadora = chamada.getNomeFuncaoChamadora();
-            resultado.putIfAbsent(funcaoChamadora, new HashSet<>());
-
+            String funcao = chamada.getNomeFuncaoChamadora();
+            resultado.putIfAbsent(funcao, new HashSet<>());
             for (String arg : chamada.getArgumentos()) {
-                String varName = extrairNomeVariavel(arg);
-                if (!varName.isEmpty()) {
-                    resultado.get(funcaoChamadora).add(varName);
-                }
+                resultado.get(funcao).add(extrairNomeBase(arg));
             }
+        }
+
+        // Força a amarração do msg.sender no construtor
+        if (resultado.containsKey("constructor")) {
+            resultado.get("constructor").add("msg.sender");
         }
 
         return resultado;
+    }
+
+    private String extrairNomeBase(String expr) {
+        expr = expr.trim();
+        int idx = expr.indexOf('[');
+        if (idx > 0)
+            return expr.substring(0, idx).trim();
+        return expr;
+    }
+
+    private void criarArcosFluxoDados(ListasInfo info) {
+        System.out.println("\n--- Criando Arcos de Fluxo de Dados ---");
+        Map<String, Set<String>> variaveisPorFuncao = mapearVariaveisAFuncoes(info);
+
+        for (FuncaoSolidity func : info.getFuncoes()) {
+            Transicao trans = transicoesFunc.get(func.getNome());
+            if (trans == null)
+                continue;
+
+            GerenciadorVariaveis gerLocal = new GerenciadorVariaveis();
+            gerenciadoresLocais.put(func.getNome(), gerLocal);
+
+            // 1º PASSO IMPORTANTE: Processar parâmetros ANTES dos arcos para mapear as
+            // letras (E, Z)
+            criarArcosParametros(func, trans, gerLocal);
+            gerLocal.getOuCriarVariavel("msg.sender", "ADDRESS");
+
+            // 2º PASSO: Criar as ligações de banco de dados
+            Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
+            for (String nomeVar : variaveisUsadas) {
+                Lugar lugarVar = lugaresVariaveis.get(nomeVar);
+                if (lugarVar != null) {
+                    criarArcoDuplo(lugarVar, trans, gerLocal, func, info);
+                }
+            }
+        }
+    }
+
+    private void criarArcoDuplo(Lugar lugar, Transicao transicao, GerenciadorVariaveis ger, FuncaoSolidity func,
+            ListasInfo info) {
+        String arcoId1 = gerarId("arco");
+        String arcoId2 = gerarId("arco");
+
+        String indiceVar = "Z"; // Padrão
+        if (lugar.getName().equals("balances") && func.getNome().equals("send")) {
+            indiceVar = ger.getOuCriarVariavel("msg.sender", "ADDRESS"); // Atribui Y
+        }
+
+        String expressaoEntrada;
+        if (lugar.getColorSet().contains("x")) {
+            expressaoEntrada = "(" + indiceVar + ", " + ger.getOuCriarVariavel(lugar.getName(), "UINT") + ")";
+        } else {
+            expressaoEntrada = ger.getOuCriarVariavel(lugar.getName(), lugar.getColorSet());
+        }
+
+        String expressaoSaida = expressaoEntrada;
+        OperacaoSolidity operacao = buscarOperacaoDaVariavel(lugar.getName(), func.getNome(), info);
+        if (operacao != null) {
+            expressaoSaida = traduzirOperacaoParaRPC(operacao, expressaoEntrada, ger);
+        }
+
+        String expressaoFinalSaida = aplicarCondicionaisRPC(expressaoSaida, expressaoEntrada, func.getNome(), info, ger,
+                false);
+
+        if (!func.isConstructor() || lugar.getName().equals("msg.sender")) {
+            arcos.add(new Arco(arcoId1, lugar.getId(), transicao.getId(), expressaoEntrada));
+        }
+
+        if (!lugar.getName().equals("msg.sender")) {
+            arcos.add(new Arco(arcoId2, transicao.getId(), lugar.getId(), expressaoFinalSaida));
+        }
     }
 
     private String construirGuardExpressao(FuncaoSolidity func, ListasInfo info) {
@@ -446,39 +432,13 @@ public class RPCBuilder {
         return guard.toString();
     }
 
-    private String mapearTipoParaColorSet(String tipo) {
-        if (tipo == null || tipo.isEmpty()) {
-            return "ANY";
-        }
-
-        tipo = tipo.toLowerCase();
-
-        if (tipo.startsWith("uint")) {
-            return "UINT";
-        } else if (tipo.startsWith("int")) {
-            return "INT";
-        } else if (tipo.equals("bool")) {
-            return "BOOL";
-        } else if (tipo.equals("address")) {
-            return "ADDRESS";
-        } else if (tipo.equals("string")) {
-            return "STRING";
-        } else if (tipo.contains("mapping")) {
-            return "MAPPING";
-        } else if (tipo.contains("[]")) {
-            return "ARRAY";
-        } else {
-            return tipo.toUpperCase();
-        }
-    }
-
-    private String extrairNomeVariavel(String expr) {
-        expr = expr.trim();
-        if (expr.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-            return expr;
-        }
-        return "";
-    }
+    // private String extrairNomeVariavel(String expr) {
+    // expr = expr.trim();
+    // if (expr.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+    // return expr;
+    // }
+    // return "";
+    // }
 
     private String gerarId(String prefix) {
         return prefix + "_" + (idCounter++);

@@ -5,7 +5,7 @@ contract Coin {
     event Sent(address from, address to, uint amount);
 
     constructor() {
-        mint = msg.sender;
+        minter = msg.sender;
     }
 
     function mint(address receiver, uint amount) public {
@@ -15,19 +15,19 @@ contract Coin {
 
     error InsufficientBalance (uint requested , uint available);
 
-    function send ( address receiver , uint amount ) public {
-        if ( amount > balances [ msg . sender ])
+    function send (address receiver , uint amount) public {
+        if (amount > balances [msg.sender])
         revert InsufficientBalance ({
-            requested : amount ,
-            available : balances [ msg . sender ]
+            requested: amount,
+            available: balances[msg.sender]
         });
 
-        balances [ msg. sender ] -= amount ;
-        increaseBalance ( receiver , amount );
-        emit Sent (msg. sender , receiver , amount );
+        balances[msg.sender] -= amount;
+        increaseBalance (receiver , amount);
+        emit Sent (msg.sender, receiver, amount);
     }
 
-    function increaseBalance ( address receiver , uint amount ) private {
-        balances [ receiver ] += amount ;
+    function increaseBalance (address receiver, uint amount) private {
+        balances[receiver] += amount;
     }
 }

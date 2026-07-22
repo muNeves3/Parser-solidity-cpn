@@ -12,5 +12,6 @@
 /home/muriloneves/www/projetos/ic/parser-sol-rdp/src/main/java/sol_rdp/App.java
 /home/muriloneves/www/projetos/ic/parser-sol-rdp/src/main/java/sol_rdp/solidity/VariavelGlobal.java
 /home/muriloneves/www/projetos/ic/parser-sol-rdp/src/main/java/sol_rdp/solidity/Condicional.java
+/home/muriloneves/www/projetos/ic/parser-sol-rdp/src/main/java/sol_rdp/rpc/GerenciadorVariaveis.java
 /home/muriloneves/www/projetos/ic/parser-sol-rdp/target/generated-sources/antlr4/SolidityParserVisitor.java
 /home/muriloneves/www/projetos/ic/parser-sol-rdp/src/main/java/sol_rdp/solidity/FuncaoSolidity.java

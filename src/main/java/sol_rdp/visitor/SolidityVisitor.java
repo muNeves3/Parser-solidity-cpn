@@ -156,7 +156,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         funcaoAtual = nomeFuncao;
 
         String visibilidade = "internal";
-        Map<String, String> parametros = new HashMap<>();
+        Map<String, String> parametros = new LinkedHashMap<>();
         List<String> nomesRetorno = new ArrayList<>();
         List<String> tiposRetorno = new ArrayList<>();
         List<String> modifiers = new ArrayList<>();
@@ -271,10 +271,11 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
         extrairCondicionais(blocoTexto, "require");
         extrairCondicionais(blocoTexto, "assert");
-        extrairCondicionais(blocoTexto, "if");
+        extrairCondicionais(blocoTexto, "if"); // Suporte para if adicionado
         extrairOperacoes(blocoTexto);
         extrairChamadas(blocoTexto);
 
+        // Mapeamento das Variáveis Globais Inerentes à EVM
         if (blocoTexto.contains("msg.sender")) {
             registrarVariavelEVM("msg.sender", "address");
         }
@@ -359,7 +360,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     }
 
     private void extrairOperacoes(String texto) {
-        // RegEx ignora conteúdo dentro de require, assert e if
+        // RegEx ignora conteúdo dentro de require, assert e if usando lookbehind
         Pattern pattern = Pattern.compile(
                 "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\]|\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*([+\\-*/%]?=)\\s*([^;]+)");
         Matcher matcher = pattern.matcher(texto);
@@ -370,7 +371,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             String operador = matcher.group(2).trim();
             String ladoDireito = matcher.group(3).trim();
 
-            // Ignorar pseudo-variáveis nativas que caem aqui por engano
+            // Ignorar pseudo-variáveis nativas da EVM que caem aqui por engano
             if (varDestinoCompleto.equals("msg") || varDestinoCompleto.equals("block"))
                 continue;
 
@@ -379,10 +380,10 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 List<String> operandos = new ArrayList<>();
 
                 // Extrai as variáveis individuais do lado direito da equação
-                Matcher varMatcher = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*").matcher(ladoDireito);
+                Matcher varMatcher = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*").matcher(ladoDireito);
                 while (varMatcher.find()) {
                     String varStr = varMatcher.group();
-                    if (!varStr.matches("^[0-9]+$")) {
+                    if (!varStr.matches("^[0-9]+$")) { // Ignora números puros
                         operandos.add(varStr);
                     }
                 }
@@ -443,24 +444,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (matcher.find()) {
             return matcher.group(1);
         }
-        return "";
-    }
-
-    private String extrairTipoIndice(SolidityParser.TypeNameContext typeNameCtx) {
-        if (typeNameCtx == null) {
-            return "";
-        }
-
-        SolidityParser.MappingTypeContext mappingTypeCtx = typeNameCtx.mappingType();
-        if (mappingTypeCtx != null && mappingTypeCtx.mappingKeyType() != null) {
-            return mappingTypeCtx.mappingKeyType().getText().trim();
-        }
-
-        SolidityParser.TypeNameContext tipoInterno = typeNameCtx.typeName();
-        if (tipoInterno != null) {
-            return extrairTipoIndice(tipoInterno);
-        }
-
         return "";
     }
 }
