@@ -366,7 +366,15 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 conteudo = conteudo.substring(0, indiceVirgulaTopo).trim();
             }
 
-            info.adicionarCondicional(new Condicional(palavraChave, conteudo, funcaoAtual, 0));
+            String tipoCond = palavraChave;
+            if (palavraChave.equals("if")) {
+                String resto = texto.substring(i + 1).trim();
+                if (resto.startsWith("revert") || resto.startsWith("return")) {
+                    tipoCond = "if_revert";
+                }
+            }
+
+            info.adicionarCondicional(new Condicional(tipoCond, conteudo, funcaoAtual, 0));
             inicio = i + 1;
         }
     }
@@ -403,9 +411,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     // o alvo da mutação e desmembrando o lado direito da equação para catalogar
     // todas as variáveis envolvidas.
     private void extrairOperacoes(String texto) {
-        // RegEx ignora conteúdo dentro de require, assert e if usando lookbehind
+        // RegEx atualizada para exigir =, +=, -=, etc., e rejeitar == usando (?!=)
         Pattern pattern = Pattern.compile(
-                "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\]|\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*([+\\-*/%]?=)\\s*([^;]+)");
+                "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_.]*(?:\\[[^\\]]*\\])*)\\s*([+\\-*/%]=|=(?!=))\\s*([^;]+)");
         Matcher matcher = pattern.matcher(texto);
 
         Set<String> jaProcessadas = new HashSet<>();
@@ -414,22 +422,13 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             String operador = matcher.group(2).trim();
             String ladoDireito = matcher.group(3).trim();
 
-            // Ignorar pseudo-variáveis nativas da EVM que caem aqui por engano
             if (varDestinoCompleto.equals("msg") || varDestinoCompleto.equals("block"))
                 continue;
 
             String assinatura = varDestinoCompleto + operador + ladoDireito;
             if (!jaProcessadas.contains(assinatura)) {
                 List<String> operandos = new ArrayList<>();
-
-                // Extrai as variáveis individuais do lado direito da equação
-                Matcher varMatcher = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*").matcher(ladoDireito);
-                while (varMatcher.find()) {
-                    String varStr = varMatcher.group();
-                    if (!varStr.matches("^[0-9]+$")) { // Ignora números puros
-                        operandos.add(varStr);
-                    }
-                }
+                operandos.add(ladoDireito);
 
                 OperacaoSolidity op = new OperacaoSolidity(varDestinoCompleto, operador, operandos, 0, funcaoAtual);
                 info.adicionarOperacao(op);
@@ -442,8 +441,10 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     // chamadas a funções nativas da EVM e funções internas como require, assert,
     // revert, if, while e for.
     private void extrairChamadas(String texto) {
+        // Limpa blocos de revert para não ler Custom Errors como se fossem funções
+        String textoLimpo = texto.replaceAll("(?s)revert\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(.*?\\);?", "");
         Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
-        Matcher matcher = pattern.matcher(texto);
+        Matcher matcher = pattern.matcher(textoLimpo);
 
         Set<String> jaProcessadas = new HashSet<>();
         while (matcher.find()) {
@@ -453,11 +454,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             if (!deveIgnorarChamada(nomeFuncaoAlvo) && !jaProcessadas.contains(nomeFuncaoAlvo)) {
                 List<String> argumentos = new ArrayList<>();
                 if (!args.isEmpty()) {
-                    for (String arg : args.split(",")) {
+                    for (String arg : args.split(","))
                         argumentos.add(arg.trim());
-                    }
                 }
-
                 ChamadaFuncao chamada = new ChamadaFuncao(funcaoAtual, nomeFuncaoAlvo, argumentos, 0);
                 info.adicionarChamada(chamada);
                 jaProcessadas.add(nomeFuncaoAlvo);

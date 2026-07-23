@@ -26,7 +26,7 @@
 		
 		function fazerPedido(Cliente c, Prato p) external {
 			require(clientesEsperando[c] >= 1, "ClientesEsperando: marca ausente");
-			require(pedidoCliente    >= 1, "PedidoCliente: marca ausente");
+			require(pedidoCliente[p]    >= 1, "PedidoCliente: marca ausente");
 			
 			clientesEsperando[c] -= 1;
 			pedidoCliente[p]     -= 1;
