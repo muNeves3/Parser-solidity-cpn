@@ -10,6 +10,8 @@ public class ListasInfo {
     private List<OperacaoSolidity> operacoes;
     private List<ChamadaFuncao> chamadas;
     private List<Condicional> condicionais;
+    private List<EnumSolidity> enums;
+    private List<StructSolidity> structs;
 
     public ListasInfo(String nomeContrato) {
         this.nomeContrato = nomeContrato;
@@ -18,6 +20,8 @@ public class ListasInfo {
         this.operacoes = new ArrayList<>();
         this.chamadas = new ArrayList<>();
         this.condicionais = new ArrayList<>();
+        this.enums = new ArrayList<>();
+        this.structs = new ArrayList<>();
     }
 
     public String getNomeContrato() {
@@ -68,9 +72,35 @@ public class ListasInfo {
         this.condicionais.add(condicional);
     }
 
+    public List<EnumSolidity> getEnums() {
+        return enums;
+    }
+
+    public void adicionarEnum(EnumSolidity enumSol) {
+        this.enums.add(enumSol);
+    }
+
+    public List<StructSolidity> getStructs() {
+        return structs;
+    }
+
+    public void adicionarStruct(StructSolidity structSol) {
+        this.structs.add(structSol);
+    }
+
     public void exibirResumo() {
         System.out.println("\n========== RESUMO DA ANÁLISE ==========");
         System.out.println("Contrato: " + nomeContrato);
+
+        if (!enums.isEmpty()) {
+            System.out.println("\nEnums (" + enums.size() + "):");
+            enums.forEach(e -> System.out.println("  - " + e));
+        }
+
+        if (!structs.isEmpty()) {
+            System.out.println("\nStructs (" + structs.size() + "):");
+            structs.forEach(s -> System.out.println("  - " + s));
+        }
         System.out.println("\nVariáveis Globais (" + variaveisGlobais.size() + "):");
         variaveisGlobais.forEach(v -> System.out.println("  - " + v));
         System.out.println("\nFunções (" + funcoes.size() + "):");
@@ -86,7 +116,9 @@ public class ListasInfo {
 
     @Override
     public String toString() {
-        return String.format("ListasInfo{nomeContrato='%s', variaveis=%d, funcoes=%d, operacoes=%d, chamadas=%d, condicionais=%d}",
-                nomeContrato, variaveisGlobais.size(), funcoes.size(), operacoes.size(), chamadas.size(), condicionais.size());
+        return String.format(
+                "ListasInfo{nomeContrato='%s', variaveis=%d, funcoes=%d, operacoes=%d, chamadas=%d, condicionais=%d}",
+                nomeContrato, variaveisGlobais.size(), funcoes.size(), operacoes.size(), chamadas.size(),
+                condicionais.size());
     }
 }

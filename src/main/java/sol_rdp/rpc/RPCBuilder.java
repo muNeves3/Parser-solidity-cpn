@@ -15,6 +15,7 @@ public class RPCBuilder {
     private int idCounter;
     private Map<String, GerenciadorVariaveis> gerenciadoresLocais;
 
+    // Inicializa as listas de entidades da rede
     public RPCBuilder() {
         this.lugares = new ArrayList<>();
         this.transicoes = new ArrayList<>();
@@ -25,6 +26,8 @@ public class RPCBuilder {
         this.gerenciadoresLocais = new HashMap<>();
     }
 
+    // responsável por construir a RPC a partir das informações extraídas do
+    // contrato Solidity
     public void construirRPC(ListasInfo info) {
         System.out.println("\nIniciando construção da RPC conforme Algoritmo 3...");
 
@@ -36,12 +39,14 @@ public class RPCBuilder {
         System.out.println("RPC construída com sucesso!");
     }
 
+    // cria os lugares oráculos para os parâmetros das funções public ou external,
+    // incluindo o construtor
     private void criarLugaresOraculos(ListasInfo info) {
         System.out.println("\n--- Criando Lugares para Parâmetros ---");
 
         for (FuncaoSolidity func : info.getFuncoes()) {
             boolean temParametros = !func.getParametros().isEmpty();
-            // Apenas public e external são oráculos. Construtor NUNCA é oráculo.
+            // Exceção: apenas public e external são oráculos. Construtor NUNCA é oráculo.
             boolean isOracle = (func.getVisibilidade().equals("public") || func.getVisibilidade().equals("external"))
                     && !func.isConstructor();
 
@@ -73,6 +78,10 @@ public class RPCBuilder {
         }
     }
 
+    // responsável por criar os lugares para as variáveis de estado do contrato,
+    // mapeando seus tipos para color sets
+    // Caso a variável possua um valor de inicialização na AST, este é definido como
+    // a marcação inicial
     private void criarLugaresVariaveis(ListasInfo info) {
         System.out.println("\n--- Criando Lugares para Variáveis de Estado ---");
 
@@ -96,6 +105,8 @@ public class RPCBuilder {
         }
     }
 
+    // responsável por mapear os tipos de variáveis do Solidity para os color sets
+    // da CPN, considerando também os tipos de índices para arrays e mappings
     private String mapearTipoParaColorSet(String tipoValor, String tipoIndice) {
         String corValor = mapearTipoSimples(tipoValor);
 
@@ -106,6 +117,7 @@ public class RPCBuilder {
         return corValor;
     }
 
+    // responsável por mapear os tipos simples do Solidity para os color sets da CPN
     private String mapearTipoSimples(String tipo) {
         if (tipo == null || tipo.isEmpty())
             return "ANY";
@@ -125,6 +137,8 @@ public class RPCBuilder {
         return tipo.toUpperCase();
     }
 
+    // cria as transições para cada função do contrato, incluindo o construtor, e
+    // define os guards baseados em require, assert e modifiers
     private void criarTransicoesFuncoes(ListasInfo info) {
         System.out.println("\n--- Criando Transições para Funções ---");
 
@@ -147,6 +161,9 @@ public class RPCBuilder {
         }
     }
 
+    // cria os arcos baseados nas chamadas de funções internas, conectando a
+    // transição chamadora ao lugar do parâmetro da função alvo, repassando as
+    // variáveis locais condicionadas ao fluxo de sucesso da transição original.
     private void criarArcosDeChamadas(ListasInfo info) {
         for (ChamadaFuncao chamada : info.getChamadas()) {
             Transicao transChamadora = transicoesFunc.get(chamada.getNomeFuncaoChamadora());
@@ -167,6 +184,9 @@ public class RPCBuilder {
         }
     }
 
+    // Filtro localizador que encontra se uma variável específica sofreu mutação
+    // dentro de uma função específica, servindo de gatilho para o acionamento do
+    // tradutor
     private OperacaoSolidity buscarOperacaoDaVariavel(String nomeVariavel, String nomeFuncao, ListasInfo info) {
         for (OperacaoSolidity op : info.getOperacoes()) {
             if (op.getNomeFuncao().equals(nomeFuncao) && op.getVariavelDestino().startsWith(nomeVariavel)) {
@@ -176,6 +196,10 @@ public class RPCBuilder {
         return null;
     }
 
+    // Recebe operações de atribuição (+=, -=, =) e as transforma em equações de
+    // transição de estado. Substitui os identificadores do Solidity pelas letras da
+    // RPC. Por exemplo, a operação balances += amount é desmembrada da tupla
+    // original (Z, F) e traduzida para (Z, F + E).
     private String traduzirOperacaoParaRPC(OperacaoSolidity op, String expressaoEntrada, GerenciadorVariaveis ger) {
         String operador = op.getOperador();
         String ladoDireito = String.join(" ", op.getOperandos());
@@ -209,10 +233,12 @@ public class RPCBuilder {
         return expressaoEntrada;
     }
 
+    // Avalia se uma mutação de estado está protegida por um if, require ou assert.
+    // se sim retorna a expressão condicionalmente, caso contrário retorna a
+    // expressão mutada.
     private String aplicarCondicionaisRPC(String expressaoMutada, String expressaoOriginal, String nomeFuncao,
             ListasInfo info, GerenciadorVariaveis ger, boolean isChamadaInterna) {
-        // Omite a condicional se a variável não sofreu alteração matemática (Para
-        // espelhar a imagem do TCC no caso 'minter')
+
         if (expressaoMutada.equals(expressaoOriginal) && !isChamadaInterna) {
             return expressaoOriginal;
         }
@@ -237,7 +263,7 @@ public class RPCBuilder {
                 } else {
                     if (cond.getTipo().equals("require") || cond.getTipo().equals("assert")) {
                         return oposto + " -> NULL; " + logica + " -> " + expressaoMutada;
-                    } else { // 'if' funciona como um revert neste contrato
+                    } else {
                         return logica + " -> " + expressaoOriginal + "; " + oposto + " -> " + expressaoMutada;
                     }
                 }
@@ -246,6 +272,9 @@ public class RPCBuilder {
         return expressaoMutada;
     }
 
+    // responsável por inverter a lógica de uma expressão condicional, transformando
+    // operadores de comparação em seus opostos.
+    // para a montagem de caminhos lógicos de descarte (-> NULL).
     private String inverterLogica(String logica) {
         if (logica.contains("<="))
             return logica.replace("<=", ">");
@@ -262,6 +291,10 @@ public class RPCBuilder {
         return "!(" + logica + ")";
     }
 
+    // Conecta os Lugares-Oráculo de entrada à sua respectiva transição
+    // Para funções com parâmetros, cria arcos de entrada com as letras
+    // correspondentes (E, Z) e para o construtor cria um arco de entrada com a
+    // letra A.
     private void criarArcosParametros(FuncaoSolidity func, Transicao trans, GerenciadorVariaveis ger) {
         String nomeLugarOracle = "par-" + func.getNome();
         for (Lugar lugar : lugares) {
@@ -284,6 +317,11 @@ public class RPCBuilder {
         }
     }
 
+    // itera sobre todas as listas de metadados extraídas pelo Visitor (Operações,
+    // Condicionais e Chamadas). Seu objetivo é descobrir todas as instâncias de
+    // estado (state variables e variáveis de EVM) tocadas por uma função
+    // específica, criando a matriz de adjacência utilizada na construção
+    // da rede.
     private Map<String, Set<String>> mapearVariaveisAFuncoes(ListasInfo info) {
         Map<String, Set<String>> resultado = new HashMap<>();
 
@@ -322,7 +360,6 @@ public class RPCBuilder {
             }
         }
 
-        // Força a amarração do msg.sender no construtor
         if (resultado.containsKey("constructor")) {
             resultado.get("constructor").add("msg.sender");
         }
@@ -338,6 +375,10 @@ public class RPCBuilder {
         return expr;
     }
 
+    // responsável por conectar os Lugares às Transições.
+    // utiliza a matriz de adjacência construída para descobrir quais variáveis de
+    // estado são tocadas por cada função, criando arcos de entrada e saída com as
+    // expressões correspondentes.
     private void criarArcosFluxoDados(ListasInfo info) {
         System.out.println("\n--- Criando Arcos de Fluxo de Dados ---");
         Map<String, Set<String>> variaveisPorFuncao = mapearVariaveisAFuncoes(info);
@@ -355,7 +396,7 @@ public class RPCBuilder {
             criarArcosParametros(func, trans, gerLocal);
             gerLocal.getOuCriarVariavel("msg.sender", "ADDRESS");
 
-            // 2º PASSO: Criar as ligações de banco de dados
+            // 2º PASSO: Criar as ligações
             Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
             for (String nomeVar : variaveisUsadas) {
                 Lugar lugarVar = lugaresVariaveis.get(nomeVar);
@@ -366,6 +407,8 @@ public class RPCBuilder {
         }
     }
 
+    // responsável por criar arcos de entrada e saída entre um lugar e uma
+    // transição, considerando a mutação de estado e as condicionais aplicáveis.
     private void criarArcoDuplo(Lugar lugar, Transicao transicao, GerenciadorVariaveis ger, FuncaoSolidity func,
             ListasInfo info) {
         String arcoId1 = gerarId("arco");
@@ -401,6 +444,9 @@ public class RPCBuilder {
         }
     }
 
+    // responsável por avaliar se a transição possui regras de guarda
+    // Ele concatena modifiers e condições primárias globais à assinatura da
+    // transição. Para o construtor, atribui estritamente a guarda true
     private String construirGuardExpressao(FuncaoSolidity func, ListasInfo info) {
         // Construtor sempre está habilitado (guard = true)
         if (func.isConstructor()) {
@@ -432,14 +478,6 @@ public class RPCBuilder {
         return guard.toString();
     }
 
-    // private String extrairNomeVariavel(String expr) {
-    // expr = expr.trim();
-    // if (expr.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-    // return expr;
-    // }
-    // return "";
-    // }
-
     private String gerarId(String prefix) {
         return prefix + "_" + (idCounter++);
     }
@@ -461,17 +499,5 @@ public class RPCBuilder {
             System.out.println("  " + arco);
         }
         System.out.println("=========================================\n");
-    }
-
-    public List<Lugar> getLugares() {
-        return lugares;
-    }
-
-    public List<Transicao> getTransicoes() {
-        return transicoes;
-    }
-
-    public List<Arco> getArcos() {
-        return arcos;
     }
 }

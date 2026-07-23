@@ -4,40 +4,32 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class GerenciadorVariaveis {
-    private int addrCount = 0;
-    private int uintCount = 0;
-    private final String[] addrVars = { "Z", "Y", "X", "W", "D" };
-    private final String[] uintVars = { "E", "F", "G", "H" };
+    private char letraAtual = 'A';
+    private int cicloAtual = 0;
 
     private Map<String, String> mapaVariaveis = new HashMap<>();
 
     public String getOuCriarVariavel(String nomeSolidity, String tipoCor) {
+        // Reutiliza a variável se ela já foi mapeada nesta transição
         if (nomeSolidity != null && mapaVariaveis.containsKey(nomeSolidity)) {
             return mapaVariaveis.get(nomeSolidity);
         }
 
-        String novaVar = "";
-        // Roteamento forçado para espelhar as letras exatas da imagem do TCC
-        if (nomeSolidity.equals("minter"))
-            novaVar = "D";
-        else if (nomeSolidity.equals("msg.sender"))
-            novaVar = "Y";
-        else if (nomeSolidity.equals("receiver"))
-            novaVar = "Z";
-        else if (nomeSolidity.equals("amount"))
-            novaVar = "E";
-        else if (nomeSolidity.startsWith("balances"))
-            novaVar = "F";
-        else if (tipoCor.contains("ADDRESS"))
-            novaVar = addrCount < addrVars.length ? addrVars[addrCount++] : "A1";
-        else if (tipoCor.contains("UINT"))
-            novaVar = uintCount < uintVars.length ? uintVars[uintCount++] : "U1";
-        else if (tipoCor.equals("BOOL"))
-            novaVar = "A";
+        // Monta a string da nova variável (ex: A, B, C... Z, A1, B1...)
+        String novaVar = cicloAtual == 0 ? String.valueOf(letraAtual) : letraAtual + String.valueOf(cicloAtual);
 
-        if (!novaVar.isEmpty()) {
+        // Incrementa o contador ASCII (de A até Z)
+        letraAtual++;
+        if (letraAtual > 'Z') {
+            letraAtual = 'A';
+            cicloAtual++;
+        }
+
+        // Registra a nova associação
+        if (nomeSolidity != null && !nomeSolidity.isEmpty()) {
             mapaVariaveis.put(nomeSolidity, novaVar);
         }
+
         return novaVar;
     }
 
