@@ -210,13 +210,17 @@ public class RPCBuilder {
     private String traduzirOperacaoParaRPC(OperacaoSolidity op, String expressaoEntrada, GerenciadorVariaveis ger) {
         String operador = op.getOperador();
         String ladoDireito = String.join(" ", op.getOperandos());
-        ladoDireito = ladoDireito.replaceAll("([a-zA-Z_][a-zA-Z0-9_]*)(?:\\[.*?\\])+", "$1_val");
-        // Ordena as chaves pela maior primeiro para evitar substituições parciais
+
         List<String> keys = new ArrayList<>(ger.getMapa().keySet());
         keys.sort((a, b) -> b.length() - a.length());
 
         for (String key : keys) {
-            ladoDireito = ladoDireito.replace(key, ger.getMapa().get(key));
+            if (key.endsWith("_val")) {
+                String arrayName = key.replace("_val", "");
+                ladoDireito = ladoDireito.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
+            } else {
+                ladoDireito = ladoDireito.replace(key, ger.getMapa().get(key));
+            }
         }
         ladoDireito = ladoDireito.replaceAll("\\[.*?\\]", "").trim();
 
@@ -256,12 +260,16 @@ public class RPCBuilder {
             if (cond.getNomeFuncao().equals(nomeFuncao)) {
                 String logica = cond.getExpressao();
 
-                logica = logica.replaceAll("([a-zA-Z_][a-zA-Z0-9_]*)(?:\\[.*?\\])+", "$1_val");
-
                 List<String> keys = new ArrayList<>(ger.getMapa().keySet());
                 keys.sort((a, b) -> b.length() - a.length());
+
                 for (String key : keys) {
-                    logica = logica.replace(key, ger.getMapa().get(key));
+                    if (key.endsWith("_val")) {
+                        String arrayName = key.replace("_val", "");
+                        logica = logica.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
+                    } else {
+                        logica = logica.replace(key, ger.getMapa().get(key));
+                    }
                 }
                 logica = logica.replaceAll("\\[.*?\\]", "").trim();
 
@@ -277,6 +285,7 @@ public class RPCBuilder {
         String logicaFinal = String.join(" AND ", condicoesCombinadas);
         String opostoFinal = "!(" + logicaFinal + ")";
 
+        // LÓGICA INVERTIDA PARA IF COM REVERT
         if (temRevert) {
             if (isChamadaInterna)
                 return logicaFinal + " -> NULL; " + opostoFinal + " -> " + expressaoOriginal;
@@ -286,25 +295,6 @@ public class RPCBuilder {
                 return opostoFinal + " -> NULL; " + logicaFinal + " -> " + expressaoOriginal;
             return opostoFinal + " -> NULL; " + logicaFinal + " -> " + expressaoMutada;
         }
-    }
-
-    // responsável por inverter a lógica de uma expressão condicional, transformando
-    // operadores de comparação em seus opostos.
-    // para a montagem de caminhos lógicos de descarte (-> NULL).
-    private String inverterLogica(String logica) {
-        if (logica.contains("<="))
-            return logica.replace("<=", ">");
-        if (logica.contains(">="))
-            return logica.replace(">=", "<");
-        if (logica.contains("<"))
-            return logica.replace("<", ">=");
-        if (logica.contains(">"))
-            return logica.replace(">", "<=");
-        if (logica.contains("=="))
-            return logica.replace("==", "!=");
-        if (logica.contains("!="))
-            return logica.replace("!=", "==");
-        return "!(" + logica + ")";
     }
 
     // Conecta os Lugares-Oráculo de entrada à sua respectiva transição
@@ -343,7 +333,7 @@ public class RPCBuilder {
 
         for (OperacaoSolidity op : info.getOperacoes()) {
             String funcao = op.getNomeFuncao();
-            resultado.putIfAbsent(funcao, new HashSet<>());
+            resultado.putIfAbsent(funcao, new LinkedHashSet<>());
             resultado.get(funcao).add(extrairNomeBase(op.getVariavelDestino()));
 
             for (String operandoBruto : op.getOperandos()) {
@@ -425,6 +415,10 @@ public class RPCBuilder {
                 Lugar lugarVar = lugaresVariaveis.get(nomeVar);
                 if (lugarVar != null) {
                     gerLocal.getOuCriarVariavel(lugarVar.getName(), lugarVar.getColorSet());
+
+                    if (lugarVar.getColorSet().contains("x")) {
+                        gerLocal.getOuCriarVariavel(lugarVar.getName() + "_val", "UINT");
+                    }
                 }
             }
 
