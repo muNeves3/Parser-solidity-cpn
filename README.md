@@ -32,14 +32,18 @@ src/main/java/sol_rdp/
 ├── visitor/
 │   └── SolidityVisitor.java
 ├── rpc/
-│   └── RPCBuilder.java
+│   ├── RPCBuilder.java
+│   └── GerenciadorVariaveis.java
 ├── solidity/
 │   ├── ListasInfo.java
 │   ├── VariavelGlobal.java
 │   ├── FuncaoSolidity.java
 │   ├── OperacaoSolidity.java
 │   ├── ChamadaFuncao.java
-│   └── Condicional.java
+│   ├── Condicional.java
+│   ├── EnumSolidity.java
+│   └── StructSolidity.java
+│
 └── cpn/
     ├── Lugar.java
     ├── Transicao.java
@@ -58,10 +62,6 @@ Ele extrai:
 - **chamadas**: invocações simples dentro do corpo da função;
 - **condicionais**: `require`, `assert` e outras validações.
 
-### Observação importante
-
-O parser foi ajustado para analisar **apenas o corpo** da função, não a assinatura inteira. Isso reduz falsos positivos e melhora a captura de operações reais do contrato.
-
 ## Fase 2: construção da RPC
 
 O `RPCBuilder` converte o conteúdo de `ListasInfo` em elementos da rede:
@@ -78,38 +78,6 @@ O `RPCBuilder` converte o conteúdo de `ListasInfo` em elementos da rede:
 mvn clean compile
 mvn exec:java -Dexec.mainClass=sol_rdp.App -Dexec.args=exemplos/Restaurante.sol
 ```
-
-## Exemplo de entrada
-
-```solidity
-function fazerPedido(Cliente c, Prato p) external {
-    require(clientesEsperando[c] >= 1);
-    clientesEsperando[c] -= 1;
-    pedidosParaCozinha[uint8(c)][uint8(p)] += 1;
-}
-```
-
-## Saída esperada
-
-Na fase de análise, o projeto imprime:
-
-- resumo das variáveis globais;
-- resumo das funções;
-- resumo das operações;
-- resumo das chamadas;
-- resumo das condicionais.
-
-Na fase de RPC, imprime:
-
-- lugares criados;
-- transições criadas;
-- arcos criados.
-
-## Limitações atuais
-
-- a extração ainda é baseada em regex em alguns pontos;
-- chamadas e expressões muito complexas podem gerar ruído;
-- o foco atual é em contratos com padrões mais diretos de operação e validação.
 
 ## Requisitos
 
