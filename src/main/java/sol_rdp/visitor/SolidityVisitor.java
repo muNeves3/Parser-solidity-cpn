@@ -91,13 +91,17 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
 
         // 2. Extrair nome usando o tipoBruto para a limpeza
         String semTipo = texto;
+        System.out.println("SEMTIPO INICIAL: " + semTipo);
         if (!tipoBruto.isEmpty()) {
             semTipo = texto.replaceFirst(Pattern.quote(tipoBruto), "").trim();
         } else if (!tipo.isEmpty()) {
             semTipo = texto.replaceFirst(Pattern.quote(tipo), "").trim();
         }
+        System.out.println("SEMTIPO FINAL: " + semTipo);
 
         semTipo = semTipo.replaceAll("public|private|internal|external|constant|immutable", "").trim();
+
+        System.out.println("SEMTIPO FINAL 2 : " + semTipo);
 
         // O primeiro token restante é o nome
         if (!semTipo.isEmpty()) {
@@ -411,10 +415,10 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     // o alvo da mutação e desmembrando o lado direito da equação para catalogar
     // todas as variáveis envolvidas.
     private void extrairOperacoes(String texto) {
-        // RegEx atualizada para exigir =, +=, -=, etc., e rejeitar == usando (?!=)
-        Pattern pattern = Pattern.compile(
+        // 1. Extração Original de Atribuições (=, +=, -=, etc.)
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
                 "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_.]*(?:\\[[^\\]]*\\])*)\\s*([+\\-*/%]=|=(?!=))\\s*([^;]+)");
-        Matcher matcher = pattern.matcher(texto);
+        java.util.regex.Matcher matcher = pattern.matcher(texto);
 
         Set<String> jaProcessadas = new HashSet<>();
         while (matcher.find()) {
@@ -433,6 +437,33 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 OperacaoSolidity op = new OperacaoSolidity(varDestinoCompleto, operador, operandos, 0, funcaoAtual);
                 info.adicionarOperacao(op);
                 jaProcessadas.add(assinatura);
+            }
+        }
+
+        // 2. Captura de injeção em Arrays (.push) convertendo para +=
+        java.util.regex.Matcher pushMatcher = java.util.regex.Pattern
+                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.push\\((.*?)\\)").matcher(texto);
+        while (pushMatcher.find()) {
+            String varDestino = pushMatcher.group(1).trim();
+            String argumento = pushMatcher.group(2).trim(); // Captura o Comanda(c, p)
+            if (!jaProcessadas.contains(varDestino + "push")) {
+                List<String> operandos = new ArrayList<>();
+                operandos.add(argumento);
+                info.adicionarOperacao(new OperacaoSolidity(varDestino, "+=", operandos, 0, funcaoAtual));
+                jaProcessadas.add(varDestino + "push");
+            }
+        }
+
+        // Captura de consumo em Arrays (.pop) convertendo para -=
+        java.util.regex.Matcher popMatcher = java.util.regex.Pattern.compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.pop\\(\\)")
+                .matcher(texto);
+        while (popMatcher.find()) {
+            String varDestino = popMatcher.group(1).trim();
+            if (!jaProcessadas.contains(varDestino + "pop")) {
+                List<String> operandos = new ArrayList<>();
+                operandos.add("1"); // O consumo de 1 unidade
+                info.adicionarOperacao(new OperacaoSolidity(varDestino, "-=", operandos, 0, funcaoAtual));
+                jaProcessadas.add(varDestino + "pop");
             }
         }
     }
@@ -476,7 +507,8 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
         if (nomeFuncaoAlvo.equals("require") || nomeFuncaoAlvo.equals("assert") ||
                 nomeFuncaoAlvo.equals("revert") || nomeFuncaoAlvo.equals("if") ||
-                nomeFuncaoAlvo.equals("while") || nomeFuncaoAlvo.equals("for")) {
+                nomeFuncaoAlvo.equals("while") || nomeFuncaoAlvo.equals("for") ||
+                nomeFuncaoAlvo.equals("push") || nomeFuncaoAlvo.equals("pop") || nomeFuncaoAlvo.equals("type")) {
             return true;
         }
         if (nomeFuncaoAlvo.startsWith("emit")) {
