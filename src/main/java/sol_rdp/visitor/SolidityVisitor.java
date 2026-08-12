@@ -171,7 +171,11 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
 
         String textoTipo = typeNameCtx.getText().trim();
-        if (textoTipo.endsWith("]")) {
+        if (textoTipo.contains("[]")) {
+            String tipoBase = textoTipo.replace("[]", "").trim();
+            if (Character.isUpperCase(tipoBase.charAt(0))) {
+                return "";
+            }
             return "int";
         }
 
@@ -442,10 +446,10 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
 
         // 2. Captura de injeção em Arrays (.push) convertendo para +=
         java.util.regex.Matcher pushMatcher = java.util.regex.Pattern
-                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.push\\((.*?)\\)").matcher(texto);
+                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.push\\(([^;]+)\\)\\s*;").matcher(texto);
         while (pushMatcher.find()) {
             String varDestino = pushMatcher.group(1).trim();
-            String argumento = pushMatcher.group(2).trim(); // Captura o Comanda(c, p)
+            String argumento = pushMatcher.group(2).trim();
             if (!jaProcessadas.contains(varDestino + "push")) {
                 List<String> operandos = new ArrayList<>();
                 operandos.add(argumento);
@@ -461,7 +465,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             String varDestino = popMatcher.group(1).trim();
             if (!jaProcessadas.contains(varDestino + "pop")) {
                 List<String> operandos = new ArrayList<>();
-                operandos.add("1"); // O consumo de 1 unidade
+                operandos.add("1");
                 info.adicionarOperacao(new OperacaoSolidity(varDestino, "-=", operandos, 0, funcaoAtual));
                 jaProcessadas.add(varDestino + "pop");
             }

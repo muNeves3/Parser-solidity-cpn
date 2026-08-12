@@ -219,10 +219,12 @@ public class RPCBuilder {
                 String arrayName = key.replace("_val", "");
                 ladoDireito = ladoDireito.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
             } else {
-                ladoDireito = ladoDireito.replace(key, ger.getMapa().get(key));
+                ladoDireito = ladoDireito.replaceAll("\\b" + key + "\\b", ger.getMapa().get(key));
             }
         }
+
         ladoDireito = ladoDireito.replaceAll("\\[.*?\\]", "").trim();
+        ladoDireito = ladoDireito.replace("type(uint256).max", "2**256 - 1");
 
         if (expressaoEntrada.startsWith("(")) {
             String[] partes = expressaoEntrada.replace("(", "").replace(")", "").split(",");
@@ -240,6 +242,10 @@ public class RPCBuilder {
         } else {
             if (operador.equals("="))
                 return ladoDireito;
+            if (operador.equals("+="))
+                return expressaoEntrada + "+" + ladoDireito;
+            if (operador.equals("-="))
+                return expressaoEntrada + "-" + ladoDireito;
         }
         return expressaoEntrada;
     }
@@ -268,10 +274,12 @@ public class RPCBuilder {
                         String arrayName = key.replace("_val", "");
                         logica = logica.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
                     } else {
-                        logica = logica.replace(key, ger.getMapa().get(key));
+                        logica = logica.replaceAll("\\b" + key + "\\b", ger.getMapa().get(key));
                     }
                 }
+
                 logica = logica.replaceAll("\\[.*?\\]", "").trim();
+                logica = logica.replace("type(uint256).max", "2**256 - 1");
 
                 if (cond.getTipo().equals("if_revert"))
                     temRevert = true;
@@ -309,12 +317,15 @@ public class RPCBuilder {
                 String expressao;
 
                 if (func.isConstructor()) {
-                    expressao = ger.getOuCriarVariavel("param_constructor", "BOOL"); // Gera 'A'
+                    expressao = ger.getOuCriarVariavel("param_constructor", "BOOL");
                 } else {
-                    // Mapeia receiver (Z) e amount (E)
-                    String v1 = ger.getOuCriarVariavel("receiver", "ADDRESS");
-                    String v2 = ger.getOuCriarVariavel("amount", "UINT");
-                    expressao = "(" + v1 + ", " + v2 + ")";
+                    // MAPEIA VARIÁVEIS PARÂMETROS
+                    List<String> varsParametros = new ArrayList<>();
+                    for (String nomeParam : func.getParametros().keySet()) {
+                        String tipoParam = func.getParametros().get(nomeParam);
+                        varsParametros.add(ger.getOuCriarVariavel(nomeParam, mapearTipoSimples(tipoParam)));
+                    }
+                    expressao = "(" + String.join(", ", varsParametros) + ")";
                 }
 
                 arcos.add(new Arco(arcoId, lugar.getId(), trans.getId(), expressao));
@@ -404,13 +415,18 @@ public class RPCBuilder {
             GerenciadorVariaveis gerLocal = new GerenciadorVariaveis();
             gerenciadoresLocais.put(func.getNome(), gerLocal);
 
+            if (func.getParametros() != null) {
+                for (String paramNome : func.getParametros().keySet()) {
+                    gerLocal.getOuCriarVariavel(paramNome, "PARAM");
+                }
+            }
+
             criarArcosParametros(func, trans, gerLocal);
             gerLocal.getOuCriarVariavel("msg.sender", "ADDRESS");
 
             Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
 
-            // 1º PASSO : Pré-carregar todas as variáveis no dicionário antes de gerar
-            // os arcos
+            // 1º PASSO : Pré-carregar todas as variáveis no dicionário
             for (String nomeVar : variaveisUsadas) {
                 Lugar lugarVar = lugaresVariaveis.get(nomeVar);
                 if (lugarVar != null) {
@@ -420,6 +436,29 @@ public class RPCBuilder {
                         gerLocal.getOuCriarVariavel(lugarVar.getName() + "_val", "UINT");
                     }
                 }
+            }
+
+            // Traduzir a guarda da transição para eliminar unbound
+            // variables
+            String guardOriginal = trans.getGuard();
+            if (guardOriginal != null && !guardOriginal.isEmpty() && !guardOriginal.equals("true")) {
+                String guardTraduzida = guardOriginal;
+                List<String> keys = new ArrayList<>(gerLocal.getMapa().keySet());
+                keys.sort((a, b) -> b.length() - a.length());
+
+                for (String key : keys) {
+                    if (key.endsWith("_val")) {
+                        String arrayName = key.replace("_val", "");
+                        guardTraduzida = guardTraduzida.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+",
+                                gerLocal.getMapa().get(key));
+                    } else {
+                        guardTraduzida = guardTraduzida.replaceAll("\\b" + key + "\\b", gerLocal.getMapa().get(key));
+                    }
+                }
+                guardTraduzida = guardTraduzida.replaceAll("\\[.*?\\]", "").trim();
+                guardTraduzida = guardTraduzida.replace("type(uint256).max", "2**256 - 1");
+
+                trans.setGuard(guardTraduzida);
             }
 
             // 2º PASSO: gerar os arcos com o dicionário completo
@@ -441,8 +480,7 @@ public class RPCBuilder {
 
         OperacaoSolidity operacao = buscarOperacaoDaVariavel(lugar.getName(), func.getNome(), info);
 
-        // Extração Dinâmica do Índice para Mappings
-        String indiceVar = "Z"; // Fallback de segurança
+        String indiceVar = "Z";
         if (lugar.getColorSet().contains("x") && operacao != null) {
             String dest = operacao.getVariavelDestino();
             int idx1 = dest.indexOf('[');
