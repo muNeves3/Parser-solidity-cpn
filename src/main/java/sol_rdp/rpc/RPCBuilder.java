@@ -15,7 +15,6 @@ public class RPCBuilder {
     private int idCounter;
     private Map<String, GerenciadorVariaveis> gerenciadoresLocais;
 
-    // Inicializa as listas de entidades da rede
     public RPCBuilder() {
         this.lugares = new ArrayList<>();
         this.transicoes = new ArrayList<>();
@@ -29,13 +28,14 @@ public class RPCBuilder {
     // responsável por construir a RPC a partir das informações extraídas do
     // contrato Solidity
     public void construirRPC(ListasInfo info) {
-        System.out.println("\nIniciando construção da RPC conforme Algoritmo 3...");
+        System.out.println("\nIniciando construção da RPC...");
 
         criarLugaresVariaveis(info);
         criarLugaresOraculos(info);
         criarTransicoesFuncoes(info);
         criarArcosFluxoDados(info);
         criarArcosDeChamadas(info);
+
         System.out.println("RPC construída com sucesso!");
     }
 
@@ -43,20 +43,19 @@ public class RPCBuilder {
     // incluindo o construtor
     private void criarLugaresOraculos(ListasInfo info) {
         System.out.println("\n--- Criando Lugares para Parâmetros ---");
-
+        // Exceção: apenas public e external são oráculos. Construtor NUNCA é oráculo.
         for (FuncaoSolidity func : info.getFuncoes()) {
             boolean temParametros = !func.getParametros().isEmpty();
-            // Exceção: apenas public e external são oráculos. Construtor NUNCA é oráculo.
             boolean isOracle = (func.getVisibilidade().equals("public") || func.getVisibilidade().equals("external"))
                     && !func.isConstructor();
 
             if (temParametros || func.isConstructor() || !isOracle) {
                 String lugarId = gerarId("lugar_param");
                 String nomeLugar = "par-" + func.getNome();
-
                 String tiposColorSet;
+
                 if (func.isConstructor() && !temParametros) {
-                    tiposColorSet = "BOOL"; // Construtor exige apenas cor booleana
+                    tiposColorSet = "BOOL";
                 } else {
                     StringBuilder tipos = new StringBuilder();
                     for (String tipo : func.getParametros().values()) {
@@ -67,13 +66,21 @@ public class RPCBuilder {
                     tiposColorSet = tipos.toString();
                 }
 
-                Lugar lugar = new Lugar(lugarId, nomeLugar, tiposColorSet, func.isConstructor() ? "1`true" : "empty",
-                        isOracle);
-                lugares.add(lugar);
-                lugaresVariaveis.put(nomeLugar, lugar); // Salva para uso em chamadas internas
+                String marcacaoInicial;
+                if (func.isConstructor() && !temParametros) {
+                    marcacaoInicial = "1`true";
+                } else if (isOracle) {
+                    marcacaoInicial = "1`" + gerarMarcacaoInicialOracle(tiposColorSet);
+                } else {
+                    marcacaoInicial = "empty";
+                }
 
-                System.out.println(String.format("  Lugar Parâmetro: %s (colorSet: %s, isOracle: %s)", nomeLugar,
-                        tiposColorSet, isOracle));
+                Lugar lugar = new Lugar(lugarId, nomeLugar, tiposColorSet, marcacaoInicial, isOracle);
+                lugares.add(lugar);
+                lugaresVariaveis.put(nomeLugar, lugar);
+
+                System.out.println(String.format("  Lugar Parâmetro: %s (colorSet: %s, isOracle: %s, marcacao: %s)",
+                        nomeLugar, tiposColorSet, isOracle, marcacaoInicial));
             }
         }
     }
@@ -87,7 +94,6 @@ public class RPCBuilder {
 
         for (VariavelGlobal var : info.getVariaveisGlobais()) {
             String lugarId = gerarId("lugar_var");
-
             String colorSet = mapearTipoParaColorSet(var.getTipo(), var.getTipoIndice());
 
             Lugar lugar = new Lugar(
@@ -100,8 +106,8 @@ public class RPCBuilder {
             lugares.add(lugar);
             lugaresVariaveis.put(var.getNome(), lugar);
 
-            System.out.println(String.format("  Lugar: %s (tipo: %s, colorSet: %s)",
-                    var.getNome(), var.getTipo(), colorSet));
+            System.out.println(
+                    String.format("  Lugar: %s (tipo: %s, colorSet: %s)", var.getNome(), var.getTipo(), colorSet));
         }
     }
 
@@ -109,7 +115,6 @@ public class RPCBuilder {
     // da CPN, considerando também os tipos de índices para arrays e mappings
     private String mapearTipoParaColorSet(String tipoValor, String tipoIndice) {
         String corValor = mapearTipoSimples(tipoValor);
-
         if (tipoIndice != null && !tipoIndice.isEmpty()) {
             String corIndice = mapearTipoSimples(tipoIndice);
             return corIndice + "x" + corValor;
@@ -144,19 +149,14 @@ public class RPCBuilder {
 
         for (FuncaoSolidity func : info.getFuncoes()) {
             String transId = gerarId("trans");
-
             String guardExpressao = construirGuardExpressao(func, info);
 
-            Transicao trans = new Transicao(
-                    transId,
-                    func.getNome(),
-                    guardExpressao);
+            Transicao trans = new Transicao(transId, func.getNome(), guardExpressao);
 
             transicoes.add(trans);
             transicoesFunc.put(func.getNome(), trans);
 
-            System.out.println(String.format("  Transição: %s%s",
-                    func.getNome(),
+            System.out.println(String.format("  Transição: %s%s", func.getNome(),
                     !guardExpressao.isEmpty() ? " [Guard: " + guardExpressao + "]" : ""));
         }
     }
@@ -171,13 +171,14 @@ public class RPCBuilder {
 
             if (transChamadora != null && lugarAlvo != null) {
                 GerenciadorVariaveis gerLocal = gerenciadoresLocais.get(chamada.getNomeFuncaoChamadora());
-
                 // Mapeia dinamicamente os argumentos passados na chamada (ex: receiver, amount
                 // -> A, B)
                 List<String> argsMapeados = new ArrayList<>();
                 for (String arg : chamada.getArgumentos()) {
                     String argLimpo = extrairNomeVariavel(arg.replaceAll("\\[.*?\\]", "").trim());
-                    argsMapeados.add(gerLocal.getOuCriarVariavel(argLimpo, "ANY"));
+                    // Busca a variável fortemente tipada (usa default caso não seja identificada no
+                    // escopo)
+                    argsMapeados.add(gerLocal.getVariavel(argLimpo, "default"));
                 }
 
                 String expressaoArco = argsMapeados.size() > 1 ? "(" + String.join(", ", argsMapeados) + ")"
@@ -195,12 +196,18 @@ public class RPCBuilder {
     // dentro de uma função específica, servindo de gatilho para o acionamento do
     // tradutor
     private OperacaoSolidity buscarOperacaoDaVariavel(String nomeVariavel, String nomeFuncao, ListasInfo info) {
+        OperacaoSolidity opEncontrada = null;
         for (OperacaoSolidity op : info.getOperacoes()) {
             if (op.getNomeFuncao().equals(nomeFuncao) && op.getVariavelDestino().startsWith(nomeVariavel)) {
-                return op;
+                if (op.getOperador().equals("POP") || op.getOperador().equals("PUSH")) {
+                    return op;
+                }
+                if (opEncontrada == null) {
+                    opEncontrada = op;
+                }
             }
         }
-        return null;
+        return opEncontrada;
     }
 
     // Recebe operações de atribuição (+=, -=, =) e as transforma em equações de
@@ -211,15 +218,16 @@ public class RPCBuilder {
         String operador = op.getOperador();
         String ladoDireito = String.join(" ", op.getOperandos());
 
-        List<String> keys = new ArrayList<>(ger.getMapa().keySet());
+        // Acesso ao mapa de variáveis do escopo atual do gerenciador
+        List<String> keys = new ArrayList<>(ger.getMapaVariaveis().keySet());
         keys.sort((a, b) -> b.length() - a.length());
 
         for (String key : keys) {
             if (key.endsWith("_val")) {
                 String arrayName = key.replace("_val", "");
-                ladoDireito = ladoDireito.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
+                ladoDireito = ladoDireito.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapaVariaveis().get(key));
             } else {
-                ladoDireito = ladoDireito.replaceAll("\\b" + key + "\\b", ger.getMapa().get(key));
+                ladoDireito = ladoDireito.replaceAll("\\b" + key + "\\b", ger.getMapaVariaveis().get(key));
             }
         }
 
@@ -238,6 +246,14 @@ public class RPCBuilder {
                     return "(" + indice + ", " + valorAtual + "-" + ladoDireito + ")";
                 if (operador.equals("="))
                     return "(" + indice + ", " + ladoDireito + ")";
+                if (operador.equals("PUSH")) {
+                    String limpo = ladoDireito.replaceAll("^[a-zA-Z_][a-zA-Z0-9_]*\\(", "(");
+                    if (expressaoEntrada.startsWith("("))
+                        return "(novo_idx, " + limpo + ")";
+                    return limpo;
+                }
+                if (operador.equals("POP"))
+                    return expressaoEntrada;
             }
         } else {
             if (operador.equals("="))
@@ -246,6 +262,14 @@ public class RPCBuilder {
                 return expressaoEntrada + "+" + ladoDireito;
             if (operador.equals("-="))
                 return expressaoEntrada + "-" + ladoDireito;
+            if (operador.equals("PUSH")) {
+                String limpo = ladoDireito.replaceAll("^[a-zA-Z_][a-zA-Z0-9_]*\\(", "(");
+                if (expressaoEntrada.startsWith("("))
+                    return "(novo_idx, " + limpo + ")";
+                return limpo;
+            }
+            if (operador.equals("POP"))
+                return expressaoEntrada;
         }
         return expressaoEntrada;
     }
@@ -266,15 +290,15 @@ public class RPCBuilder {
             if (cond.getNomeFuncao().equals(nomeFuncao)) {
                 String logica = cond.getExpressao();
 
-                List<String> keys = new ArrayList<>(ger.getMapa().keySet());
+                List<String> keys = new ArrayList<>(ger.getMapaVariaveis().keySet());
                 keys.sort((a, b) -> b.length() - a.length());
 
                 for (String key : keys) {
                     if (key.endsWith("_val")) {
                         String arrayName = key.replace("_val", "");
-                        logica = logica.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapa().get(key));
+                        logica = logica.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapaVariaveis().get(key));
                     } else {
-                        logica = logica.replaceAll("\\b" + key + "\\b", ger.getMapa().get(key));
+                        logica = logica.replaceAll("\\b" + key + "\\b", ger.getMapaVariaveis().get(key));
                     }
                 }
 
@@ -293,7 +317,6 @@ public class RPCBuilder {
         String logicaFinal = String.join(" AND ", condicoesCombinadas);
         String opostoFinal = "!(" + logicaFinal + ")";
 
-        // LÓGICA INVERTIDA PARA IF COM REVERT
         if (temRevert) {
             if (isChamadaInterna)
                 return logicaFinal + " -> NULL; " + opostoFinal + " -> " + expressaoOriginal;
@@ -317,13 +340,12 @@ public class RPCBuilder {
                 String expressao;
 
                 if (func.isConstructor()) {
-                    expressao = ger.getOuCriarVariavel("param_constructor", "BOOL");
+                    expressao = ger.getVariavel("param_constructor", "bool");
                 } else {
-                    // MAPEIA VARIÁVEIS PARÂMETROS
                     List<String> varsParametros = new ArrayList<>();
                     for (String nomeParam : func.getParametros().keySet()) {
                         String tipoParam = func.getParametros().get(nomeParam);
-                        varsParametros.add(ger.getOuCriarVariavel(nomeParam, mapearTipoSimples(tipoParam)));
+                        varsParametros.add(ger.getVariavel(nomeParam, tipoParam));
                     }
                     expressao = "(" + String.join(", ", varsParametros) + ")";
                 }
@@ -347,8 +369,8 @@ public class RPCBuilder {
             resultado.putIfAbsent(funcao, new LinkedHashSet<>());
             resultado.get(funcao).add(extrairNomeBase(op.getVariavelDestino()));
 
+            // Filtra a string bruta para achar apenas os nomes (ignorando números)
             for (String operandoBruto : op.getOperandos()) {
-                // Filtra a string bruta para achar apenas os nomes (ignorando números)
                 java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*")
                         .matcher(operandoBruto);
                 while (m.find()) {
@@ -364,7 +386,6 @@ public class RPCBuilder {
             String funcao = cond.getNomeFuncao();
             resultado.putIfAbsent(funcao, new HashSet<>());
 
-            // Regex atualizada para permitir o ponto (msg.sender)
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*")
                     .matcher(cond.getExpressao());
             while (m.find()) {
@@ -412,17 +433,20 @@ public class RPCBuilder {
             if (trans == null)
                 continue;
 
+            // Inicia o escopo novo e limpo para essa transição
             GerenciadorVariaveis gerLocal = new GerenciadorVariaveis();
             gerenciadoresLocais.put(func.getNome(), gerLocal);
 
             if (func.getParametros() != null) {
                 for (String paramNome : func.getParametros().keySet()) {
-                    gerLocal.getOuCriarVariavel(paramNome, "PARAM");
+                    // Pega o tipo real da AST para gerar a letra correta
+                    String tipoReal = func.getParametros().get(paramNome);
+                    gerLocal.getVariavel(paramNome, tipoReal);
                 }
             }
 
             criarArcosParametros(func, trans, gerLocal);
-            gerLocal.getOuCriarVariavel("msg.sender", "ADDRESS");
+            gerLocal.getVariavel("msg.sender", "address");
 
             Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
 
@@ -430,29 +454,29 @@ public class RPCBuilder {
             for (String nomeVar : variaveisUsadas) {
                 Lugar lugarVar = lugaresVariaveis.get(nomeVar);
                 if (lugarVar != null) {
-                    gerLocal.getOuCriarVariavel(lugarVar.getName(), lugarVar.getColorSet());
+                    gerLocal.getVariavel(lugarVar.getName(), lugarVar.getColorSet());
 
                     if (lugarVar.getColorSet().contains("x")) {
-                        gerLocal.getOuCriarVariavel(lugarVar.getName() + "_val", "UINT");
+                        gerLocal.getVariavel(lugarVar.getName() + "_val", "uint");
                     }
                 }
             }
 
-            // Traduzir a guarda da transição para eliminar unbound
-            // variables
+            // Traduzir a guarda da transição para eliminar unbound variables
             String guardOriginal = trans.getGuard();
             if (guardOriginal != null && !guardOriginal.isEmpty() && !guardOriginal.equals("true")) {
                 String guardTraduzida = guardOriginal;
-                List<String> keys = new ArrayList<>(gerLocal.getMapa().keySet());
+                List<String> keys = new ArrayList<>(gerLocal.getMapaVariaveis().keySet());
                 keys.sort((a, b) -> b.length() - a.length());
 
                 for (String key : keys) {
                     if (key.endsWith("_val")) {
                         String arrayName = key.replace("_val", "");
                         guardTraduzida = guardTraduzida.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+",
-                                gerLocal.getMapa().get(key));
+                                gerLocal.getMapaVariaveis().get(key));
                     } else {
-                        guardTraduzida = guardTraduzida.replaceAll("\\b" + key + "\\b", gerLocal.getMapa().get(key));
+                        guardTraduzida = guardTraduzida.replaceAll("\\b" + key + "\\b",
+                                gerLocal.getMapaVariaveis().get(key));
                     }
                 }
                 guardTraduzida = guardTraduzida.replaceAll("\\[.*?\\]", "").trim();
@@ -479,6 +503,8 @@ public class RPCBuilder {
         String arcoId2 = gerarId("arco");
 
         OperacaoSolidity operacao = buscarOperacaoDaVariavel(lugar.getName(), func.getNome(), info);
+        boolean isPush = operacao != null && operacao.getOperador().equals("PUSH");
+        boolean isPop = operacao != null && operacao.getOperador().equals("POP");
 
         String indiceVar = "Z";
         if (lugar.getColorSet().contains("x") && operacao != null) {
@@ -487,15 +513,27 @@ public class RPCBuilder {
             int idx2 = dest.indexOf(']');
             if (idx1 > 0 && idx2 > idx1) {
                 String indexOriginal = dest.substring(idx1 + 1, idx2).trim();
-                indiceVar = ger.getOuCriarVariavel(indexOriginal, "ANY");
+                indiceVar = ger.getVariavel(indexOriginal, "default");
+            } else if (!isPush) {
+                indiceVar = ger.getVariavel("idx", "default");
             }
         }
 
         String expressaoEntrada;
         if (lugar.getColorSet().contains("x")) {
-            expressaoEntrada = "(" + indiceVar + ", " + ger.getOuCriarVariavel(lugar.getName() + "_val", "UINT") + ")";
+            expressaoEntrada = "(" + indiceVar + ", " + ger.getVariavel(lugar.getName() + "_val", "default") + ")";
         } else {
-            expressaoEntrada = ger.getOuCriarVariavel(lugar.getName(), lugar.getColorSet());
+            expressaoEntrada = ger.getVariavel(lugar.getName(), lugar.getColorSet());
+        }
+
+        if (isPop && lugar.getColorSet().contains("x")) {
+            List<String> varsParametros = new ArrayList<>();
+            for (String nomeParam : func.getParametros().keySet()) {
+                varsParametros.add(ger.getVariavel(nomeParam, "default"));
+            }
+            if (!varsParametros.isEmpty()) {
+                expressaoEntrada = "(idx, (" + String.join(", ", varsParametros) + "))";
+            }
         }
 
         String expressaoSaida = expressaoEntrada;
@@ -503,14 +541,25 @@ public class RPCBuilder {
             expressaoSaida = traduzirOperacaoParaRPC(operacao, expressaoEntrada, ger);
         }
 
-        String expressaoFinalSaida = aplicarCondicionaisRPC(expressaoSaida, expressaoEntrada, func.getNome(), info, ger,
-                false);
+        String expressaoFinalSaida;
+        if (isPush || isPop) {
+            expressaoFinalSaida = expressaoSaida;
+        } else {
+            expressaoFinalSaida = aplicarCondicionaisRPC(expressaoSaida, expressaoEntrada, func.getNome(), info, ger,
+                    false);
+        }
 
-        if (!func.isConstructor() || lugar.getName().equals("msg.sender")) {
+        boolean criaEntrada = (!func.isConstructor() || lugar.getName().equals("msg.sender")) && !isPush;
+
+        // CORREÇÃO: Oráculos como msg.sender DEVEM ter arco de saída para evitar
+        // deadlock consumindo o token global
+        boolean criaSaida = !isPop;
+
+        if (criaEntrada) {
             arcos.add(new Arco(arcoId1, lugar.getId(), transicao.getId(), expressaoEntrada));
         }
 
-        if (!lugar.getName().equals("msg.sender")) {
+        if (criaSaida) {
             arcos.add(new Arco(arcoId2, transicao.getId(), lugar.getId(), expressaoFinalSaida));
         }
     }
@@ -519,19 +568,16 @@ public class RPCBuilder {
     // Ele concatena modifiers e condições primárias globais à assinatura da
     // transição. Para o construtor, atribui estritamente a guarda true
     private String construirGuardExpressao(FuncaoSolidity func, ListasInfo info) {
-        // Construtor sempre está habilitado (guard = true)
-        if (func.isConstructor()) {
+        if (func.isConstructor())
             return "true";
-        }
 
         StringBuilder guard = new StringBuilder();
 
         for (Condicional cond : info.getCondicionais()) {
             if (cond.getNomeFuncao().equals(func.getNome())) {
                 if (cond.getTipo().equals("require") || cond.getTipo().equals("assert")) {
-                    if (guard.length() > 0) {
+                    if (guard.length() > 0)
                         guard.append(" AND ");
-                    }
                     guard.append(cond.getExpressao());
                 }
             }
@@ -539,9 +585,8 @@ public class RPCBuilder {
 
         for (String modifier : func.getModifiers()) {
             if (modifier.contains("onlyOwner") || modifier.contains("nonReentrant")) {
-                if (guard.length() > 0) {
+                if (guard.length() > 0)
                     guard.append(" AND ");
-                }
                 guard.append(modifier);
             }
         }
@@ -554,18 +599,12 @@ public class RPCBuilder {
     }
 
     private String extrairNomeVariavel(String expr) {
-        if (expr == null) {
+        if (expr == null)
             return "";
-        }
-
         expr = expr.trim();
-
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_.]*)").matcher(expr);
-
-        if (matcher.find()) {
+        if (matcher.find())
             return matcher.group(1);
-        }
-
         return expr;
     }
 
@@ -586,5 +625,48 @@ public class RPCBuilder {
             System.out.println("  " + arco);
         }
         System.out.println("=========================================\n");
+    }
+
+    public List<Lugar> getLugares() {
+        return lugares;
+    }
+
+    public List<Transicao> getTransicoes() {
+        return transicoes;
+    }
+
+    public List<Arco> getArcos() {
+        return arcos;
+    }
+
+    private String gerarMarcacaoInicialOracle(String colorSet) {
+        if (colorSet.contains("x")) {
+            String[] tipos = colorSet.split("x");
+            List<String> valores = new ArrayList<>();
+            for (String t : tipos) {
+                valores.add(obterValorDefaultPorTipo(t.trim()));
+            }
+            return "(" + String.join(", ", valores) + ")";
+        }
+        return obterValorDefaultPorTipo(colorSet);
+    }
+
+    /**
+     * Retorna um valor simbólico ou zerado válido para o tipo CPN.
+     */
+    private String obterValorDefaultPorTipo(String tipo) {
+        switch (tipo) {
+            case "ADDRESS":
+                return "\"0x_ext\""; // Endereço genérico simulando um usuário externo
+            case "UINT":
+            case "INT":
+                return "0"; // Valor numérico padrão
+            case "BOOL":
+                return "false";
+            case "STRING":
+                return "\"\"";
+            default:
+                return "ext_data"; // Fallback para Structs/Enums
+        }
     }
 }

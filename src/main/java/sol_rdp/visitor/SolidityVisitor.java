@@ -172,11 +172,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
 
         String textoTipo = typeNameCtx.getText().trim();
         if (textoTipo.contains("[]")) {
-            String tipoBase = textoTipo.replace("[]", "").trim();
-            if (Character.isUpperCase(tipoBase.charAt(0))) {
-                return "";
-            }
-            return "int";
+            return "uint";
         }
 
         return "";
@@ -191,7 +187,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         funcaoAtual = nomeFuncao;
 
         String visibilidade = "internal";
-        Map<String, String> parametros = new LinkedHashMap<>();
+        LinkedHashMap<String, String> parametros = new LinkedHashMap<>();
         List<String> nomesRetorno = new ArrayList<>();
         List<String> tiposRetorno = new ArrayList<>();
         List<String> modifiers = new ArrayList<>();
@@ -246,7 +242,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         funcaoAtual = nomeFuncao;
 
         String visibilidade = "internal";
-        Map<String, String> parametros = new HashMap<>();
+        LinkedHashMap<String, String> parametros = new LinkedHashMap<>();
         List<String> nomesRetorno = new ArrayList<>();
         List<String> tiposRetorno = new ArrayList<>();
         List<String> modifiers = new ArrayList<>();
@@ -351,6 +347,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             int i = abertura + 1;
             boolean encontrouFechamento = false;
 
+            if (texto.contains("type"))
+                break;
+
             for (; i < texto.length(); i++) {
                 char c = texto.charAt(i);
                 if (c == '(') {
@@ -423,8 +422,8 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
                 "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_.]*(?:\\[[^\\]]*\\])*)\\s*([+\\-*/%]=|=(?!=))\\s*([^;]+)");
         java.util.regex.Matcher matcher = pattern.matcher(texto);
-
         Set<String> jaProcessadas = new HashSet<>();
+
         while (matcher.find()) {
             String varDestinoCompleto = matcher.group(1).trim();
             String operador = matcher.group(2).trim();
@@ -453,12 +452,11 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             if (!jaProcessadas.contains(varDestino + "push")) {
                 List<String> operandos = new ArrayList<>();
                 operandos.add(argumento);
-                info.adicionarOperacao(new OperacaoSolidity(varDestino, "+=", operandos, 0, funcaoAtual));
+                info.adicionarOperacao(new OperacaoSolidity(varDestino, "PUSH", operandos, 0, funcaoAtual));
                 jaProcessadas.add(varDestino + "push");
             }
         }
 
-        // Captura de consumo em Arrays (.pop) convertendo para -=
         java.util.regex.Matcher popMatcher = java.util.regex.Pattern.compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.pop\\(\\)")
                 .matcher(texto);
         while (popMatcher.find()) {
@@ -466,7 +464,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             if (!jaProcessadas.contains(varDestino + "pop")) {
                 List<String> operandos = new ArrayList<>();
                 operandos.add("1");
-                info.adicionarOperacao(new OperacaoSolidity(varDestino, "-=", operandos, 0, funcaoAtual));
+                info.adicionarOperacao(new OperacaoSolidity(varDestino, "POP", operandos, 0, funcaoAtual));
                 jaProcessadas.add(varDestino + "pop");
             }
         }

@@ -1,22 +1,22 @@
 package sol_rdp.solidity;
 
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 public class FuncaoSolidity {
     private String nome;
     private List<String> nomesRetorno;
     private List<String> tiposRetorno;
     private String visibilidade;
-    private Map<String, String> parametros;
+    private LinkedHashMap<String, String> parametros;
     private int linhaInicio;
     private int linhaFim;
     private List<String> modifiers;
     private boolean isConstructor;
 
     public FuncaoSolidity(String nome, List<String> nomesRetorno, List<String> tiposRetorno,
-                          String visibilidade, Map<String, String> parametros,
-                          int linhaInicio, int linhaFim) {
+            String visibilidade, LinkedHashMap<String, String> parametros,
+            int linhaInicio, int linhaFim) {
         this.nome = nome;
         this.nomesRetorno = nomesRetorno;
         this.tiposRetorno = tiposRetorno;
@@ -29,8 +29,8 @@ public class FuncaoSolidity {
     }
 
     public FuncaoSolidity(String nome, List<String> nomesRetorno, List<String> tiposRetorno,
-                          String visibilidade, Map<String, String> parametros,
-                          int linhaInicio, int linhaFim, List<String> modifiers, boolean isConstructor) {
+            String visibilidade, LinkedHashMap<String, String> parametros,
+            int linhaInicio, int linhaFim, List<String> modifiers, boolean isConstructor) {
         this.nome = nome;
         this.nomesRetorno = nomesRetorno;
         this.tiposRetorno = tiposRetorno;
@@ -74,11 +74,11 @@ public class FuncaoSolidity {
         this.visibilidade = visibilidade;
     }
 
-    public Map<String, String> getParametros() {
+    public LinkedHashMap<String, String> getParametros() {
         return parametros;
     }
 
-    public void setParametros(Map<String, String> parametros) {
+    public void setParametros(LinkedHashMap<String, String> parametros) {
         this.parametros = parametros;
     }
 
