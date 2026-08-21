@@ -37,8 +37,8 @@ public class App {
                 info.exibirResumo();
 
                 System.out.println("\n========== FASE 2: CONSTRUÇÃO DA RPC ==========");
-                RPCBuilder builder = new RPCBuilder();
-                builder.construirRPC(info);
+                RPCBuilder builder = new RPCBuilder(info);
+                builder.construirRPC();
                 builder.exibirResultados();
 
                 // PNMLExporter exporter = new PNMLExporter();

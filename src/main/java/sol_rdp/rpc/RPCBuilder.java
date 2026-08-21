@@ -14,8 +14,9 @@ public class RPCBuilder {
     private Map<String, Transicao> transicoesFunc;
     private int idCounter;
     private Map<String, GerenciadorVariaveis> gerenciadoresLocais;
+    private ListasInfo listasInfo;
 
-    public RPCBuilder() {
+    public RPCBuilder(ListasInfo info) {
         this.lugares = new ArrayList<>();
         this.transicoes = new ArrayList<>();
         this.arcos = new ArrayList<>();
@@ -23,18 +24,19 @@ public class RPCBuilder {
         this.transicoesFunc = new HashMap<>();
         this.idCounter = 0;
         this.gerenciadoresLocais = new HashMap<>();
+        this.listasInfo = info;
     }
 
     // responsável por construir a RPC a partir das informações extraídas do
     // contrato Solidity
-    public void construirRPC(ListasInfo info) {
+    public void construirRPC() {
         System.out.println("\nIniciando construção da RPC...");
 
-        criarLugaresVariaveis(info);
-        criarLugaresOraculos(info);
-        criarTransicoesFuncoes(info);
-        criarArcosFluxoDados(info);
-        criarArcosDeChamadas(info);
+        criarLugaresVariaveis(this.listasInfo);
+        criarLugaresOraculos(this.listasInfo);
+        criarTransicoesFuncoes(this.listasInfo);
+        criarArcosFluxoDados(this.listasInfo);
+        criarArcosDeChamadas(this.listasInfo);
 
         System.out.println("RPC construída com sucesso!");
     }

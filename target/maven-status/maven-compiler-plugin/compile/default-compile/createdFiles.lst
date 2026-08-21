@@ -63,6 +63,7 @@ sol_rdp/antlr/SolidityParser$ConstructorDefinitionContext.class
 sol_rdp/antlr/SolidityParser$VariableDeclarationContext.class
 SolidityParser$BitXorOperationContext.class
 SolidityParser$YulSwitchStatementContext.class
+SolidityLexer.class
 SolidityParser$StringLiteralContext.class
 sol_rdp/antlr/SolidityParser$ForStatementContext.class
 sol_rdp/antlr/SolidityParser$OrOperationContext.class
@@ -162,6 +163,7 @@ sol_rdp/antlr/SolidityParser$EnumDefinitionContext.class
 SolidityParser$ExpressionContext.class
 SolidityParser$OrOperationContext.class
 SolidityParser$BitAndOperationContext.class
+SolidityLexer.interp
 SolidityParser$ContractBodyElementContext.class
 SolidityParser$YulBlockContext.class
 sol_rdp/antlr/SolidityLexer.class
