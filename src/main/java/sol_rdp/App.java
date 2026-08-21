@@ -31,7 +31,8 @@ public class App {
 
             System.out.println("\n========== FASE 1: ANÁLISE SINTÁTICA E SEMÂNTICA ==========");
             SolidityVisitor visitor = new SolidityVisitor();
-            ListasInfo info = (ListasInfo) visitor.visit(tree);
+            visitor.visit(tree);
+            ListasInfo info = visitor.getListasInfo();
 
             if (info != null) {
                 info.exibirResumo();

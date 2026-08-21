@@ -20,6 +20,10 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         this.funcaoAtual = "";
     }
 
+    public ListasInfo getListasInfo() {
+        return info;
+    }
+
     // ponto de entrada do contrato, continua a leitura através do visitChildren
     // por fim retorna o objeto populado
     @Override
