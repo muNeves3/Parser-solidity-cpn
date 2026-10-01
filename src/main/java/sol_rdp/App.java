@@ -7,6 +7,7 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import sol_rdp.antlr.SolidityLexer;
 import sol_rdp.antlr.SolidityParser;
 import sol_rdp.solidity.ListasInfo;
+import sol_rdp.utils.ExportadorCPN;
 import sol_rdp.visitor.SolidityVisitor;
 //import sol_rdp.rpc.PNMLExporter;
 import sol_rdp.rpc.RPCBuilder;
@@ -42,13 +43,14 @@ public class App {
                 builder.construirRPC();
                 builder.exibirResultados();
 
-                // PNMLExporter exporter = new PNMLExporter();
-                // exporter.exportarParaPNML(
-                // "saida/ContratoRestaurante.pnml",
-                // "Restaurante",
-                // builder.getLugares(),
-                // builder.getTransicoes(),
-                // builder.getArcos());
+                // Exportar o resultado
+                ExportadorCPN exportador = new ExportadorCPN();
+                exportador.exportar(
+                        builder.getLugares(),
+                        builder.getTransicoes(),
+                        builder.getArcos(),
+                        "saida/contrato_modelo.cpn");
+
             } else {
                 System.err.println("Erro: Análise retornou null");
                 System.exit(1);
