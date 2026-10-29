@@ -1,12 +1,14 @@
 package sol_rdp.rpc;
 
-import sol_rdp.solidity.*;
+import sol_rdp.cpn.Arco;
 import sol_rdp.cpn.Lugar;
 import sol_rdp.cpn.Transicao;
-import sol_rdp.cpn.Arco;
+import sol_rdp.solidity.*;
+
 import java.util.*;
 
 public class RPCBuilder {
+
     private List<Lugar> lugares;
     private List<Transicao> transicoes;
     private List<Arco> arcos;
@@ -14,619 +16,837 @@ public class RPCBuilder {
     private Map<String, Transicao> transicoesFunc;
     private int idCounter;
     private Map<String, GerenciadorVariaveis> gerenciadoresLocais;
-    private ListasInfo listasInfo;
 
-    public RPCBuilder(ListasInfo info) {
+    // Metadados das variáveis indexadas para o lugar consolidado chaves_init (Opção
+    // A)
+    private List<VariavelGlobal> variaveisIndexadas;
+    private Map<String, Integer> indiceVariavelNaTupla; // nomeVar -> i (0..k-1)
+    private Map<String, String> variavelListaPorVar; // nomeVar -> "L1", "L2", ...
+    private Map<String, String> tipoListaPorVar; // nomeVar -> "ADDRESS_LIST", "UINT_LIST", ...
+    private Lugar lugarChavesInit;
+
+    public RPCBuilder() {
         this.lugares = new ArrayList<>();
         this.transicoes = new ArrayList<>();
         this.arcos = new ArrayList<>();
-        this.lugaresVariaveis = new HashMap<>();
-        this.transicoesFunc = new HashMap<>();
+        this.lugaresVariaveis = new LinkedHashMap<>();
+        this.transicoesFunc = new LinkedHashMap<>();
         this.idCounter = 0;
-        this.gerenciadoresLocais = new HashMap<>();
-        this.listasInfo = info;
+        this.gerenciadoresLocais = new LinkedHashMap<>();
+        this.variaveisIndexadas = new ArrayList<>();
+        this.indiceVariavelNaTupla = new LinkedHashMap<>();
+        this.variavelListaPorVar = new LinkedHashMap<>();
+        this.tipoListaPorVar = new LinkedHashMap<>();
     }
 
-    // responsável por construir a RPC a partir das informações extraídas do
-    // contrato Solidity
-    public void construirRPC() {
-        System.out.println("\nIniciando construção da RPC...");
-
-        criarLugaresVariaveis(this.listasInfo);
-        criarLugaresOraculos(this.listasInfo);
-        criarTransicoesFuncoes(this.listasInfo);
-        criarArcosFluxoDados(this.listasInfo);
-        criarArcosDeChamadas(this.listasInfo);
-
-        System.out.println("RPC construída com sucesso!");
+    private String proximoId(String prefixo) {
+        return prefixo + (++idCounter);
     }
 
-    // cria os lugares oráculos para os parâmetros das funções public ou external,
-    // incluindo o construtor
-    private void criarLugaresOraculos(ListasInfo info) {
-        System.out.println("\n--- Criando Lugares para Parâmetros ---");
-        // Exceção: apenas public e external são oráculos. Construtor NUNCA é oráculo.
-        for (FuncaoSolidity func : info.getFuncoes()) {
-            boolean temParametros = !func.getParametros().isEmpty();
-            boolean isOracle = (func.getVisibilidade().equals("public") || func.getVisibilidade().equals("external"))
-                    && !func.isConstructor();
-
-            if (temParametros || func.isConstructor() || !isOracle) {
-                String lugarId = gerarId("lugar_param");
-                String nomeLugar = "par-" + func.getNome();
-                String tiposColorSet;
-
-                if (func.isConstructor() && !temParametros) {
-                    tiposColorSet = "BOOL";
-                } else {
-                    StringBuilder tipos = new StringBuilder();
-                    for (String tipo : func.getParametros().values()) {
-                        if (tipos.length() > 0)
-                            tipos.append("x"); // Produto cartesiano de cores
-                        tipos.append(mapearTipoParaColorSet(tipo, ""));
-                    }
-                    tiposColorSet = tipos.toString();
-                }
-
-                String marcacaoInicial;
-                if (func.isConstructor() && !temParametros) {
-                    marcacaoInicial = "1`true";
-                } else if (isOracle) {
-                    marcacaoInicial = "1`" + gerarMarcacaoInicialOracle(tiposColorSet);
-                } else {
-                    marcacaoInicial = "empty";
-                }
-
-                Lugar lugar = new Lugar(lugarId, nomeLugar, tiposColorSet, marcacaoInicial, isOracle);
-                lugares.add(lugar);
-                lugaresVariaveis.put(nomeLugar, lugar);
-
-                System.out.println(String.format("  Lugar Parâmetro: %s (colorSet: %s, isOracle: %s, marcacao: %s)",
-                        nomeLugar, tiposColorSet, isOracle, marcacaoInicial));
-            }
-        }
+    private boolean ehVariavelEspecialMsg(String nomeVar) {
+        if (nomeVar == null)
+            return false;
+        String n = nomeVar.trim();
+        return n.equalsIgnoreCase("msg.sender")
+                || n.equalsIgnoreCase("msg.send")
+                || n.equalsIgnoreCase("msg.value");
     }
 
-    // responsável por criar os lugares para as variáveis de estado do contrato,
-    // mapeando seus tipos para color sets
-    // Caso a variável possua um valor de inicialização na AST, este é definido como
-    // a marcação inicial
-    private void criarLugaresVariaveis(ListasInfo info) {
-        System.out.println("\n--- Criando Lugares para Variáveis de Estado ---");
-
-        for (VariavelGlobal var : info.getVariaveisGlobais()) {
-            String lugarId = gerarId("lugar_var");
-            String colorSet = mapearTipoParaColorSet(var.getTipo(), var.getTipoIndice());
-
-            Lugar lugar = new Lugar(
-                    lugarId,
-                    var.getNome(),
-                    colorSet,
-                    var.getValorInicial().isEmpty() ? "empty" : var.getValorInicial(),
-                    false);
-
-            lugares.add(lugar);
-            lugaresVariaveis.put(var.getNome(), lugar);
-
-            System.out.println(
-                    String.format("  Lugar: %s (tipo: %s, colorSet: %s)", var.getNome(), var.getTipo(), colorSet));
-        }
+    private boolean ehFuncaoConstrutora(FuncaoSolidity func) {
+        if (func == null)
+            return false;
+        return func.isConstructor()
+                || func.getNome().equalsIgnoreCase("constructor")
+                || func.getNome().equalsIgnoreCase("construtor");
     }
 
-    // responsável por mapear os tipos de variáveis do Solidity para os color sets
-    // da CPN, considerando também os tipos de índices para arrays e mappings
-    private String mapearTipoParaColorSet(String tipoValor, String tipoIndice) {
-        String corValor = mapearTipoSimples(tipoValor);
-        if (tipoIndice != null && !tipoIndice.isEmpty()) {
-            String corIndice = mapearTipoSimples(tipoIndice);
-            return corIndice + "x" + corValor;
-        }
-        return corValor;
+    public void construirRPC(ListasInfo info) {
+        garantirExistenciaConstrutor(info);
+        criarLugaresVariaveis(info);
+        criarLugaresOraculos(info);
+        criarTransicoesFuncoes(info);
+        criarArcosFluxoDados(info);
+        criarArcosDeChamadas(info);
+        criarSubredeInicializacaoSobDemanda(info);
     }
 
-    // responsável por mapear os tipos simples do Solidity para os color sets da CPN
-    private String mapearTipoSimples(String tipo) {
-        if (tipo == null || tipo.isEmpty())
-            return "ANY";
-        tipo = tipo.toLowerCase();
-
-        if (tipo.startsWith("uint"))
-            return "UINT";
-        if (tipo.startsWith("int"))
-            return "INT";
-        if (tipo.equals("address"))
-            return "ADDRESS";
-        if (tipo.equals("bool"))
-            return "BOOL";
-        if (tipo.equals("string"))
-            return "STRING";
-
-        return tipo.toUpperCase();
-    }
-
-    // cria as transições para cada função do contrato, incluindo o construtor, e
-    // define os guards baseados em require, assert e modifiers
-    private void criarTransicoesFuncoes(ListasInfo info) {
-        System.out.println("\n--- Criando Transições para Funções ---");
-
-        for (FuncaoSolidity func : info.getFuncoes()) {
-            String transId = gerarId("trans");
-            String guardExpressao = construirGuardExpressao(func, info);
-
-            Transicao trans = new Transicao(transId, func.getNome(), guardExpressao);
-
-            transicoes.add(trans);
-            transicoesFunc.put(func.getNome(), trans);
-
-            System.out.println(String.format("  Transição: %s%s", func.getNome(),
-                    !guardExpressao.isEmpty() ? " [Guard: " + guardExpressao + "]" : ""));
-        }
-    }
-
-    // cria os arcos baseados nas chamadas de funções internas, conectando a
-    // transição chamadora ao lugar do parâmetro da função alvo, repassando as
-    // variáveis locais condicionadas ao fluxo de sucesso da transição original.
-    private void criarArcosDeChamadas(ListasInfo info) {
-        for (ChamadaFuncao chamada : info.getChamadas()) {
-            Transicao transChamadora = transicoesFunc.get(chamada.getNomeFuncaoChamadora());
-            Lugar lugarAlvo = lugaresVariaveis.get("par-" + chamada.getNomeFuncaoAlvo());
-
-            if (transChamadora != null && lugarAlvo != null) {
-                GerenciadorVariaveis gerLocal = gerenciadoresLocais.get(chamada.getNomeFuncaoChamadora());
-                // Mapeia dinamicamente os argumentos passados na chamada (ex: receiver, amount
-                // -> A, B)
-                List<String> argsMapeados = new ArrayList<>();
-                for (String arg : chamada.getArgumentos()) {
-                    String argLimpo = extrairNomeVariavel(arg.replaceAll("\\[.*?\\]", "").trim());
-                    // Busca a variável fortemente tipada (usa default caso não seja identificada no
-                    // escopo)
-                    argsMapeados.add(gerLocal.getVariavel(argLimpo, "default"));
-                }
-
-                String expressaoArco = argsMapeados.size() > 1 ? "(" + String.join(", ", argsMapeados) + ")"
-                        : argsMapeados.get(0);
-
-                String expressaoFinal = aplicarCondicionaisRPC(expressaoArco, expressaoArco, transChamadora.getName(),
-                        info, gerLocal, true);
-
-                arcos.add(new Arco(gerarId("arco_chamada"), transChamadora.getId(), lugarAlvo.getId(), expressaoFinal));
-            }
-        }
-    }
-
-    // Filtro localizador que encontra se uma variável específica sofreu mutação
-    // dentro de uma função específica, servindo de gatilho para o acionamento do
-    // tradutor
-    private OperacaoSolidity buscarOperacaoDaVariavel(String nomeVariavel, String nomeFuncao, ListasInfo info) {
-        OperacaoSolidity opEncontrada = null;
-        for (OperacaoSolidity op : info.getOperacoes()) {
-            if (op.getNomeFuncao().equals(nomeFuncao) && op.getVariavelDestino().startsWith(nomeVariavel)) {
-                if (op.getOperador().equals("POP") || op.getOperador().equals("PUSH")) {
-                    return op;
-                }
-                if (opEncontrada == null) {
-                    opEncontrada = op;
-                }
-            }
-        }
-        return opEncontrada;
-    }
-
-    // Recebe operações de atribuição (+=, -=, =) e as transforma em equações de
-    // transição de estado. Substitui os identificadores do Solidity pelas letras da
-    // RPC. Por exemplo, a operação balances += amount é desmembrada da tupla
-    // original (Z, F) e traduzida para (Z, F + E).
-    private String traduzirOperacaoParaRPC(OperacaoSolidity op, String expressaoEntrada, GerenciadorVariaveis ger) {
-        String operador = op.getOperador();
-        String ladoDireito = String.join(" ", op.getOperandos());
-
-        // Acesso ao mapa de variáveis do escopo atual do gerenciador
-        List<String> keys = new ArrayList<>(ger.getMapaVariaveis().keySet());
-        keys.sort((a, b) -> b.length() - a.length());
-
-        for (String key : keys) {
-            if (key.endsWith("_val")) {
-                String arrayName = key.replace("_val", "");
-                ladoDireito = ladoDireito.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapaVariaveis().get(key));
-            } else {
-                ladoDireito = ladoDireito.replaceAll("\\b" + key + "\\b", ger.getMapaVariaveis().get(key));
-            }
-        }
-
-        ladoDireito = ladoDireito.replaceAll("\\[.*?\\]", "").trim();
-        ladoDireito = ladoDireito.replace("type(uint256).max", "2**256 - 1");
-
-        if (expressaoEntrada.startsWith("(")) {
-            String[] partes = expressaoEntrada.replace("(", "").replace(")", "").split(",");
-            if (partes.length >= 2) {
-                String indice = partes[0].trim();
-                String valorAtual = partes[1].trim();
-
-                if (operador.equals("+="))
-                    return "(" + indice + ", " + valorAtual + "+" + ladoDireito + ")";
-                if (operador.equals("-="))
-                    return "(" + indice + ", " + valorAtual + "-" + ladoDireito + ")";
-                if (operador.equals("="))
-                    return "(" + indice + ", " + ladoDireito + ")";
-                if (operador.equals("PUSH")) {
-                    String limpo = ladoDireito.replaceAll("^[a-zA-Z_][a-zA-Z0-9_]*\\(", "(");
-                    if (expressaoEntrada.startsWith("("))
-                        return "(novo_idx, " + limpo + ")";
-                    return limpo;
-                }
-                if (operador.equals("POP"))
-                    return expressaoEntrada;
-            }
-        } else {
-            if (operador.equals("="))
-                return ladoDireito;
-            if (operador.equals("+="))
-                return expressaoEntrada + "+" + ladoDireito;
-            if (operador.equals("-="))
-                return expressaoEntrada + "-" + ladoDireito;
-            if (operador.equals("PUSH")) {
-                String limpo = ladoDireito.replaceAll("^[a-zA-Z_][a-zA-Z0-9_]*\\(", "(");
-                if (expressaoEntrada.startsWith("("))
-                    return "(novo_idx, " + limpo + ")";
-                return limpo;
-            }
-            if (operador.equals("POP"))
-                return expressaoEntrada;
-        }
-        return expressaoEntrada;
-    }
-
-    // Avalia se uma mutação de estado está protegida por um if, require ou assert.
-    // se sim retorna a expressão condicionalmente, caso contrário retorna a
-    // expressão mutada.
-    private String aplicarCondicionaisRPC(String expressaoMutada, String expressaoOriginal, String nomeFuncao,
-            ListasInfo info, GerenciadorVariaveis ger, boolean isChamadaInterna) {
-        if (expressaoMutada.equals(expressaoOriginal) && !isChamadaInterna) {
-            return expressaoOriginal;
-        }
-
-        List<String> condicoesCombinadas = new ArrayList<>();
-        boolean temRevert = false;
-
-        for (Condicional cond : info.getCondicionais()) {
-            if (cond.getNomeFuncao().equals(nomeFuncao)) {
-                String logica = cond.getExpressao();
-
-                List<String> keys = new ArrayList<>(ger.getMapaVariaveis().keySet());
-                keys.sort((a, b) -> b.length() - a.length());
-
-                for (String key : keys) {
-                    if (key.endsWith("_val")) {
-                        String arrayName = key.replace("_val", "");
-                        logica = logica.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+", ger.getMapaVariaveis().get(key));
-                    } else {
-                        logica = logica.replaceAll("\\b" + key + "\\b", ger.getMapaVariaveis().get(key));
-                    }
-                }
-
-                logica = logica.replaceAll("\\[.*?\\]", "").trim();
-                logica = logica.replace("type(uint256).max", "2**256 - 1");
-
-                if (cond.getTipo().equals("if_revert"))
-                    temRevert = true;
-                condicoesCombinadas.add(logica);
-            }
-        }
-
-        if (condicoesCombinadas.isEmpty())
-            return expressaoMutada;
-
-        String logicaFinal = String.join(" AND ", condicoesCombinadas);
-        String opostoFinal = "!(" + logicaFinal + ")";
-
-        if (temRevert) {
-            if (isChamadaInterna)
-                return logicaFinal + " -> NULL; " + opostoFinal + " -> " + expressaoOriginal;
-            return logicaFinal + " -> NULL; " + opostoFinal + " -> " + expressaoMutada;
-        } else {
-            if (isChamadaInterna)
-                return opostoFinal + " -> NULL; " + logicaFinal + " -> " + expressaoOriginal;
-            return opostoFinal + " -> NULL; " + logicaFinal + " -> " + expressaoMutada;
-        }
-    }
-
-    // Conecta os Lugares-Oráculo de entrada à sua respectiva transição
-    // Para funções com parâmetros, cria arcos de entrada com as letras
-    // correspondentes (E, Z) e para o construtor cria um arco de entrada com a
-    // letra A.
-    private void criarArcosParametros(FuncaoSolidity func, Transicao trans, GerenciadorVariaveis ger) {
-        String nomeLugarOracle = "par-" + func.getNome();
-        for (Lugar lugar : lugares) {
-            if (lugar.getName().equals(nomeLugarOracle)) {
-                String arcoId = gerarId("arco");
-                String expressao;
-
-                if (func.isConstructor()) {
-                    expressao = ger.getVariavel("param_constructor", "bool");
-                } else {
-                    List<String> varsParametros = new ArrayList<>();
-                    for (String nomeParam : func.getParametros().keySet()) {
-                        String tipoParam = func.getParametros().get(nomeParam);
-                        varsParametros.add(ger.getVariavel(nomeParam, tipoParam));
-                    }
-                    expressao = "(" + String.join(", ", varsParametros) + ")";
-                }
-
-                arcos.add(new Arco(arcoId, lugar.getId(), trans.getId(), expressao));
+    /**
+     * Garante que todo contrato tenha uma função construtora para inicializar o
+     * estado da EVM.
+     */
+    private void garantirExistenciaConstrutor(ListasInfo info) {
+        boolean temConstrutor = false;
+        for (FuncaoSolidity f : info.getFuncoes()) {
+            if (ehFuncaoConstrutora(f)) {
+                temConstrutor = true;
                 break;
             }
         }
+
+        if (!temConstrutor) {
+            FuncaoSolidity construtorPadrao = new FuncaoSolidity(
+                    "construtor",
+                    new ArrayList<>(),
+                    new ArrayList<>(),
+                    "public",
+                    new LinkedHashMap<>(),
+                    0,
+                    1,
+                    new ArrayList<>(),
+                    true);
+            info.adicionarFuncao(construtorPadrao);
+        }
     }
 
-    // itera sobre todas as listas de metadados extraídas pelo Visitor (Operações,
-    // Condicionais e Chamadas). Seu objetivo é descobrir todas as instâncias de
-    // estado (state variables e variáveis de EVM) tocadas por uma função
-    // específica, criando a matriz de adjacência utilizada na construção
-    // da rede.
-    private Map<String, Set<String>> mapearVariaveisAFuncoes(ListasInfo info) {
-        Map<String, Set<String>> resultado = new HashMap<>();
+    /**
+     * Passo 1a: Cria os lugares para as variáveis globais e o lugar único
+     * consolidado chaves_init.
+     */
+    public void criarLugaresVariaveis(ListasInfo info) {
+        int idxLista = 1;
+        for (VariavelGlobal var : info.getVariaveisGlobais()) {
+            if (ehVariavelEspecialMsg(var.getNome())) {
+                continue;
+            }
 
+            String colorSet = obterColorSetVariavel(var);
+            Lugar lugar = new Lugar(proximoId("P"), var.getNome(), colorSet, "", false);
+            this.lugares.add(lugar);
+            this.lugaresVariaveis.put(var.getNome(), lugar);
+
+            if (ehVariavelIndexada(var)) {
+                int pos = variaveisIndexadas.size();
+                variaveisIndexadas.add(var);
+                indiceVariavelNaTupla.put(var.getNome(), pos);
+
+                String varLista = "L" + idxLista++;
+                String tipoIndiceSML = mapearTipoPrimitivoSML(var.getTipoIndice());
+                String tipoListaSML = tipoIndiceSML + "_LIST";
+
+                variavelListaPorVar.put(var.getNome(), varLista);
+                tipoListaPorVar.put(var.getNome(), tipoListaSML);
+            }
+        }
+
+        // Se houver pelo menos uma variável indexada (mapping ou vetor), cria o lugar
+        // único chaves_init
+        if (!variaveisIndexadas.isEmpty()) {
+            String colorSetChavesInit;
+            if (variaveisIndexadas.size() == 1) {
+                colorSetChavesInit = tipoListaPorVar.get(variaveisIndexadas.get(0).getNome());
+            } else {
+                // Usa o padrão "ADDRESS_LISTxUINT_LIST" compatível com CPN Tools
+                colorSetChavesInit = String.join("x", tipoListaPorVar.values());
+            }
+            this.lugarChavesInit = new Lugar(proximoId("P"), "chaves_init", colorSetChavesInit, "", false);
+            this.lugares.add(this.lugarChavesInit);
+            this.lugaresVariaveis.put("chaves_init", this.lugarChavesInit);
+        }
+    }
+
+    /**
+     * Passo 1b: Cria os lugares de parâmetros das funções, parconstrutor e lugares
+     * oráculo (msg.send).
+     */
+    public void criarLugaresOraculos(ListasInfo info) {
+        boolean usaMsgSender = false;
         for (OperacaoSolidity op : info.getOperacoes()) {
-            String funcao = op.getNomeFuncao();
-            resultado.putIfAbsent(funcao, new LinkedHashSet<>());
-            resultado.get(funcao).add(extrairNomeBase(op.getVariavelDestino()));
-
-            // Filtra a string bruta para achar apenas os nomes (ignorando números)
-            for (String operandoBruto : op.getOperandos()) {
-                java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*")
-                        .matcher(operandoBruto);
-                while (m.find()) {
-                    String varName = m.group();
-                    if (!varName.matches("^[0-9]+$") && !varName.equals("msg") && !varName.equals("block")) {
-                        resultado.get(funcao).add(extrairNomeBase(varName));
-                    }
-                }
+            if (op.getOperador().contains("msg.sender") || op.getVariavelDestino().contains("msg.sender")
+                    || op.getOperandos().contains("msg.sender")) {
+                usaMsgSender = true;
+                break;
             }
         }
-
         for (Condicional cond : info.getCondicionais()) {
-            String funcao = cond.getNomeFuncao();
-            resultado.putIfAbsent(funcao, new HashSet<>());
-
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*")
-                    .matcher(cond.getExpressao());
-            while (m.find()) {
-                String varName = m.group();
-                if (!varName.equals("msg") && !varName.equals("block")) {
-                    resultado.get(funcao).add(extrairNomeBase(varName));
-                }
+            if (cond.getExpressao().contains("msg.sender")) {
+                usaMsgSender = true;
+                break;
             }
         }
-
-        for (ChamadaFuncao chamada : info.getChamadas()) {
-            String funcao = chamada.getNomeFuncaoChamadora();
-            resultado.putIfAbsent(funcao, new HashSet<>());
-            for (String arg : chamada.getArgumentos()) {
-                resultado.get(funcao).add(extrairNomeBase(arg));
-            }
+        if (usaMsgSender && !lugaresVariaveis.containsKey("msg.send")) {
+            Lugar msgSend = new Lugar(proximoId("P"), "msg.send", "ADDRESS", "", true);
+            this.lugares.add(msgSend);
+            this.lugaresVariaveis.put("msg.send", msgSend);
         }
-
-        if (resultado.containsKey("constructor")) {
-            resultado.get("constructor").add("msg.sender");
-        }
-
-        return resultado;
-    }
-
-    private String extrairNomeBase(String expr) {
-        expr = expr.trim();
-        int idx = expr.indexOf('[');
-        if (idx > 0)
-            return expr.substring(0, idx).trim();
-        return expr;
-    }
-
-    // responsável por conectar os Lugares às Transições.
-    // utiliza a matriz de adjacência construída para descobrir quais variáveis de
-    // estado são tocadas por cada função, criando arcos de entrada e saída com as
-    // expressões correspondentes.
-    private void criarArcosFluxoDados(ListasInfo info) {
-        System.out.println("\n--- Criando Arcos de Fluxo de Dados ---");
-
-        Map<String, Set<String>> variaveisPorFuncao = mapearVariaveisAFuncoes(info);
 
         for (FuncaoSolidity func : info.getFuncoes()) {
-            Transicao trans = transicoesFunc.get(func.getNome());
-            if (trans == null)
+            if (ehFuncaoConstrutora(func)) {
+                String nomeLugar = "parconstrutor";
+                if (!func.getParametros().isEmpty()) {
+                    String corParam = obterColorSetParametros(func.getParametros());
+                    Lugar parConst = new Lugar(proximoId("P"), nomeLugar, corParam, "", false);
+                    this.lugares.add(parConst);
+                    this.lugaresVariaveis.put(nomeLugar, parConst);
+                } else {
+                    Lugar parConst = new Lugar(proximoId("P"), nomeLugar, "BOOL", "1`true", false);
+                    this.lugares.add(parConst);
+                    this.lugaresVariaveis.put(nomeLugar, parConst);
+                }
+            } else if (!func.getParametros().isEmpty()) {
+                String nomeLugar = "par" + func.getNome();
+                String corParam = obterColorSetParametros(func.getParametros());
+                boolean isOraculo = func.getVisibilidade().equalsIgnoreCase("public")
+                        || func.getVisibilidade().equalsIgnoreCase("external");
+                Lugar lugarParam = new Lugar(proximoId("P"), nomeLugar, corParam, "", isOraculo);
+                this.lugares.add(lugarParam);
+                this.lugaresVariaveis.put(nomeLugar, lugarParam);
+            }
+        }
+    }
+
+    /**
+     * Passo 2: Cria as transições correspondentes às funções do contrato.
+     */
+    public void criarTransicoesFuncoes(ListasInfo info) {
+        for (FuncaoSolidity func : info.getFuncoes()) {
+            String nomeTrans = ehFuncaoConstrutora(func) ? "construtor" : func.getNome();
+            Transicao trans = new Transicao(proximoId("T"), nomeTrans, "");
+            this.transicoes.add(trans);
+            this.transicoesFunc.put(func.getNome(), trans);
+            this.gerenciadoresLocais.put(func.getNome(), new GerenciadorVariaveis());
+        }
+    }
+
+    /**
+     * Passo 3 e 4: Cria os arcos de parâmetros, inicialização no construtor e arcos
+     * duplos nas funções.
+     */
+    public void criarArcosFluxoDados(ListasInfo info) {
+        for (FuncaoSolidity func : info.getFuncoes()) {
+            Transicao trans = this.transicoesFunc.get(func.getNome());
+            GerenciadorVariaveis gv = this.gerenciadoresLocais.get(func.getNome());
+
+            // 1. Conecta lugar de parâmetros à transição
+            if (ehFuncaoConstrutora(func)) {
+                Lugar parConst = this.lugaresVariaveis.get("parconstrutor");
+                if (parConst != null) {
+                    String exprParam = mapearParametrosEntrada(func, parConst, gv);
+                    this.arcos.add(new Arco(proximoId("A"), parConst.getId(), trans.getId(), exprParam));
+                }
+            } else if (!func.getParametros().isEmpty()) {
+                Lugar lugarParam = this.lugaresVariaveis.get("par" + func.getNome());
+                if (lugarParam != null) {
+                    String exprParam = mapearParametrosEntrada(func, lugarParam, gv);
+                    this.arcos.add(new Arco(proximoId("A"), lugarParam.getId(), trans.getId(), exprParam));
+                }
+            }
+
+            // 2. Conecta msg.send se a função utilizar msg.sender
+            if (funcaoUsaMsgSender(func.getNome(), info)) {
+                Lugar lugarMsg = this.lugaresVariaveis.get("msg.send");
+                if (lugarMsg != null) {
+                    String varMsg = gv.obterOuAlocarVariavel("msg.sender", "ADDRESS");
+                    this.arcos.add(new Arco(proximoId("A"), lugarMsg.getId(), trans.getId(), "1`" + varMsg));
+                }
+            }
+
+            // 3. Tratamento do Construtor vs. Funções de Negócio
+            if (ehFuncaoConstrutora(func)) {
+                criarArcosInicializacaoConstrutor(func, trans, gv, info);
+            } else {
+                criarArcosDuplosFuncao(func, trans, gv, info);
+            }
+        }
+    }
+
+    /**
+     * Regra do Construtor:
+     * - Variáveis escalares: recebem arco simples de saída com valor atribuído
+     * (Caso 1) ou padrão da EVM (Caso 2).
+     * - Variáveis indexadas: o construtor emite a tupla de listas iniciais para o
+     * lugar único chaves_init.
+     */
+    private void criarArcosInicializacaoConstrutor(
+            FuncaoSolidity func, Transicao transConst, GerenciadorVariaveis gv, ListasInfo info) {
+
+        List<String> listasIniciais = new ArrayList<>();
+
+        for (VariavelGlobal var : info.getVariaveisGlobais()) {
+            if (ehVariavelEspecialMsg(var.getNome())) {
+                continue;
+            }
+            Lugar lugarVar = this.lugaresVariaveis.get(var.getNome());
+            if (lugarVar == null) {
+                continue;
+            }
+
+            OperacaoSolidity opAtrib = buscarOperacaoVariavelNaFuncao(func.getNome(), var.getNome(), info);
+
+            if (ehVariavelIndexada(var)) {
+                // Verifica se o construtor atribuiu alguma posição específica do mapping/vetor
+                if (opAtrib != null && opAtrib.getVariavelDestino().contains("[")) {
+                    String chaveSol = extrairIndiceAcesso(opAtrib.getVariavelDestino());
+                    String tipoIndiceSML = mapearTipoPrimitivoSML(var.getTipoIndice());
+                    String varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, info);
+                    String valSML = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, info);
+
+                    this.arcos.add(new Arco(
+                            proximoId("A"), transConst.getId(), lugarVar.getId(),
+                            "1`(" + varChaveSML + ", " + valSML + ")"));
+                    listasIniciais.add("[" + varChaveSML + "]");
+                } else {
+                    listasIniciais.add("[]");
+                }
+            } else {
+                // Variável escalar (Caso 1 ou Caso 2)
+                String valorSaida;
+                if (opAtrib != null) {
+                    valorSaida = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, info);
+                } else if (var.getValorInicial() != null && !var.getValorInicial().trim().isEmpty()) {
+                    valorSaida = formatarLiteralSML(var.getValorInicial(), var.getTipo(), info);
+                } else {
+                    valorSaida = obterValorPadraoPrimitivo(var.getTipo(), info);
+                }
+                this.arcos.add(new Arco(
+                        proximoId("A"), transConst.getId(), lugarVar.getId(), "1`" + valorSaida));
+            }
+        }
+
+        // Arco simples saindo do construtor para o lugar consolidado chaves_init
+        if (this.lugarChavesInit != null && !listasIniciais.isEmpty()) {
+            String exprChavesInit;
+            if (listasIniciais.size() == 1) {
+                exprChavesInit = "1`" + listasIniciais.get(0);
+            } else {
+                exprChavesInit = "1`(" + String.join(", ", listasIniciais) + ")";
+            }
+            this.arcos.add(new Arco(
+                    proximoId("A"), transConst.getId(), this.lugarChavesInit.getId(), exprChavesInit));
+        }
+    }
+
+    /**
+     * Regra para funções normais: cria arcos duplos (leitura e escrita/restituição)
+     * para variáveis globais usadas.
+     */
+    private void criarArcosDuplosFuncao(
+            FuncaoSolidity func, Transicao trans, GerenciadorVariaveis gv, ListasInfo info) {
+
+        for (VariavelGlobal var : info.getVariaveisGlobais()) {
+            if (ehVariavelEspecialMsg(var.getNome())) {
+                continue;
+            }
+            if (!variavelUsadaNaFuncao(var.getNome(), func.getNome(), info)) {
+                continue;
+            }
+            Lugar lugarVar = this.lugaresVariaveis.get(var.getNome());
+            if (lugarVar == null) {
+                continue;
+            }
+
+            OperacaoSolidity op = buscarOperacaoVariavelNaFuncao(func.getNome(), var.getNome(), info);
+
+            String exprEntrada;
+            String varValorAntigoSML;
+            String varChaveSML = null;
+
+            if (ehVariavelIndexada(var)) {
+                String chaveSol = descobrirExpressaoIndiceUsada(var.getNome(), func.getNome(), info);
+                String tipoIndiceSML = mapearTipoPrimitivoSML(var.getTipoIndice());
+                varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, info);
+
+                String tipoValorSML = mapearTipoPrimitivoSML(var.getTipo());
+                varValorAntigoSML = gv.obterOuAlocarVariavel(
+                        var.getNome() + "[" + chaveSol + "]", tipoValorSML);
+                exprEntrada = "1`(" + varChaveSML + ", " + varValorAntigoSML + ")";
+            } else {
+                String tipoSML = mapearTipoPrimitivoSML(var.getTipo());
+                varValorAntigoSML = gv.obterOuAlocarVariavel(var.getNome(), tipoSML);
+                exprEntrada = "1`" + varValorAntigoSML;
+            }
+
+            // Arco de Entrada (LugarVar -> Transicao)
+            this.arcos.add(new Arco(proximoId("A"), lugarVar.getId(), trans.getId(), exprEntrada));
+
+            // Arco de Saída (Transicao -> LugarVar)
+            String exprSaida = construirExpressaoSaidaVariavel(
+                    func, var, op, varChaveSML, varValorAntigoSML, gv, info);
+            this.arcos.add(new Arco(proximoId("A"), trans.getId(), lugarVar.getId(), exprSaida));
+        }
+    }
+
+    /**
+     * Passo 3b: Cria os arcos de chamadas de subfunções internas (ex: mint ->
+     * parincreaseBalance).
+     */
+    public void criarArcosDeChamadas(ListasInfo info) {
+        for (ChamadaFuncao call : info.getChamadas()) {
+            String nomeA = call.getNomeFuncaoChamadora();
+            String nomeB = call.getNomeFuncaoAlvo();
+
+            Transicao transChamadora = this.transicoesFunc.get(nomeA);
+            Lugar lugarDestino = this.lugaresVariaveis.get("par" + nomeB);
+            String funcEscopo = nomeA;
+
+            if (lugarDestino == null && this.lugaresVariaveis.containsKey("par" + nomeA)
+                    && this.transicoesFunc.containsKey(nomeB)) {
+                transChamadora = this.transicoesFunc.get(nomeB);
+                lugarDestino = this.lugaresVariaveis.get("par" + nomeA);
+                funcEscopo = nomeB;
+            }
+
+            if (transChamadora == null || lugarDestino == null
+                    || transChamadora.getName().equals("par" + lugarDestino.getName())) {
+                continue;
+            }
+            if (lugarDestino.getName().equals("par" + transChamadora.getName())) {
+                continue;
+            }
+
+            GerenciadorVariaveis gv = this.gerenciadoresLocais.get(funcEscopo);
+            List<String> argsSML = new ArrayList<>();
+            for (String argSol : call.getArgumentos()) {
+                String varSML = gv.buscarVariavelSML(argSol.trim());
+                if (varSML == null) {
+                    varSML = resolverOperandoParaSML(argSol.trim(), "UINT", gv, info);
+                }
+                argsSML.add(varSML);
+            }
+
+            String tokenChamada = argsSML.size() == 1
+                    ? "1`" + argsSML.get(0)
+                    : "1`(" + String.join(", ", argsSML) + ")";
+
+            List<Condicional> conds = buscarCondicionaisDaFuncao(funcEscopo, info);
+            String exprArcoChamada = aplicarCondicionaisEmChamada(tokenChamada, conds, gv, info);
+
+            this.arcos.add(new Arco(
+                    proximoId("A"), transChamadora.getId(), lugarDestino.getId(), exprArcoChamada));
+        }
+    }
+
+    /**
+     * Nova Etapa: Cria as transições de inicialização sob demanda (init_<var>_<K>)
+     * conectadas ao lugar único consolidado chaves_init (Opção A).
+     */
+    public void criarSubredeInicializacaoSobDemanda(ListasInfo info) {
+        if (this.lugarChavesInit == null || this.variaveisIndexadas.isEmpty()) {
+            return;
+        }
+
+        Set<String> initsCriados = new HashSet<>();
+        int totalIndexadas = this.variaveisIndexadas.size();
+        List<Arco> arcosAtuais = new ArrayList<>(this.arcos);
+
+        for (VariavelGlobal varIndexada : this.variaveisIndexadas) {
+            Lugar lugarMap = this.lugaresVariaveis.get(varIndexada.getNome());
+            if (lugarMap == null)
                 continue;
 
-            // Inicia o escopo novo e limpo para essa transição
-            GerenciadorVariaveis gerLocal = new GerenciadorVariaveis();
-            gerenciadoresLocais.put(func.getNome(), gerLocal);
+            int posNaTupla = this.indiceVariavelNaTupla.get(varIndexada.getNome());
+            String varListaAlvo = this.variavelListaPorVar.get(varIndexada.getNome());
+            String tipoListaAlvo = this.tipoListaPorVar.get(varIndexada.getNome());
+            String valorPadraoElem = obterValorPadraoPrimitivo(varIndexada.getTipo(), info);
 
-            if (func.getParametros() != null) {
-                for (String paramNome : func.getParametros().keySet()) {
-                    // Pega o tipo real da AST para gerar a letra correta
-                    String tipoReal = func.getParametros().get(paramNome);
-                    gerLocal.getVariavel(paramNome, tipoReal);
-                }
-            }
+            for (Arco arcoLeitura : arcosAtuais) {
+                if (!arcoLeitura.getSourceId().equals(lugarMap.getId()))
+                    continue;
 
-            criarArcosParametros(func, trans, gerLocal);
-            gerLocal.getVariavel("msg.sender", "address");
+                String idTransicao = arcoLeitura.getTargetId();
+                String varChaveK = extrairPrimeiroElementoTuplaSML(arcoLeitura.getExpression());
+                if (varChaveK == null || varChaveK.isEmpty())
+                    continue;
 
-            Set<String> variaveisUsadas = variaveisPorFuncao.getOrDefault(func.getNome(), new HashSet<>());
+                Arco arcoFornecedor = buscarArcoFornecedorDaChave(
+                        idTransicao, lugarMap.getId(), varChaveK, arcosAtuais);
+                if (arcoFornecedor == null)
+                    continue;
 
-            // 1º PASSO : Pré-carregar todas as variáveis no dicionário
-            for (String nomeVar : variaveisUsadas) {
-                Lugar lugarVar = lugaresVariaveis.get(nomeVar);
-                if (lugarVar != null) {
-                    gerLocal.getVariavel(lugarVar.getName(), lugarVar.getColorSet());
+                String idLugarOrigem = arcoFornecedor.getSourceId();
+                String exprOrigem = arcoFornecedor.getExpression();
 
-                    if (lugarVar.getColorSet().contains("x")) {
-                        gerLocal.getVariavel(lugarVar.getName() + "_val", "uint");
-                    }
-                }
-            }
+                String chaveUnicaInit = varIndexada.getNome() + ":" + idLugarOrigem + ":" + varChaveK;
+                if (initsCriados.contains(chaveUnicaInit))
+                    continue;
+                initsCriados.add(chaveUnicaInit);
 
-            // Traduzir a guarda da transição para eliminar unbound variables
-            String guardOriginal = trans.getGuard();
-            if (guardOriginal != null && !guardOriginal.isEmpty() && !guardOriginal.equals("true")) {
-                String guardTraduzida = guardOriginal;
-                List<String> keys = new ArrayList<>(gerLocal.getMapaVariaveis().keySet());
-                keys.sort((a, b) -> b.length() - a.length());
+                String nomeTransInit = "init_" + varIndexada.getNome() + "_" + varChaveK;
+                String guardaSML = "[not (mem " + varListaAlvo + " " + varChaveK + ")]";
+                Transicao transInit = new Transicao(proximoId("T"), nomeTransInit, guardaSML);
+                this.transicoes.add(transInit);
 
-                for (String key : keys) {
-                    if (key.endsWith("_val")) {
-                        String arrayName = key.replace("_val", "");
-                        guardTraduzida = guardTraduzida.replaceAll(arrayName + "(?:\\[[^\\]]*\\])+",
-                                gerLocal.getMapaVariaveis().get(key));
-                    } else {
-                        guardTraduzida = guardTraduzida.replaceAll("\\b" + key + "\\b",
-                                gerLocal.getMapaVariaveis().get(key));
-                    }
-                }
-                guardTraduzida = guardTraduzida.replaceAll("\\[.*?\\]", "").trim();
-                guardTraduzida = guardTraduzida.replace("type(uint256).max", "2**256 - 1");
+                // Registra a variável de lista no gerenciador para exportação garantida no
+                // Globbox
+                GerenciadorVariaveis gvInit = new GerenciadorVariaveis();
+                gvInit.registrarVariavelExplicita(varListaAlvo, varListaAlvo, tipoListaAlvo);
+                this.gerenciadoresLocais.put(nomeTransInit, gvInit);
 
-                trans.setGuard(guardTraduzida);
-            }
+                // 1. Arco duplo entre o lugar fornecedor da chave K e a transição init
+                this.arcos.add(new Arco(proximoId("A"), idLugarOrigem, transInit.getId(), exprOrigem));
+                this.arcos.add(new Arco(proximoId("A"), transInit.getId(), idLugarOrigem, exprOrigem));
 
-            // 2º PASSO: gerar os arcos com o dicionário completo
-            for (String nomeVar : variaveisUsadas) {
-                Lugar lugarVar = lugaresVariaveis.get(nomeVar);
-                if (lugarVar != null) {
-                    criarArcoDuplo(lugarVar, trans, gerLocal, func, info);
-                }
+                // 2. Arco duplo entre o lugar consolidado chaves_init e a transição init
+                String exprConsumoChaves = construirTuplaListasConsumo(totalIndexadas);
+                String exprProducaoChaves = construirTuplaListasAtualizada(
+                        totalIndexadas, posNaTupla, varChaveK);
+                this.arcos.add(new Arco(
+                        proximoId("A"), this.lugarChavesInit.getId(), transInit.getId(), exprConsumoChaves));
+                this.arcos.add(new Arco(
+                        proximoId("A"), transInit.getId(), this.lugarChavesInit.getId(), exprProducaoChaves));
+
+                // 3. Arco simples de saída da transição init para o lugar do mapeamento/vetor
+                String exprNovoElemento = "1`(" + varChaveK + ", " + valorPadraoElem + ")";
+                this.arcos.add(new Arco(
+                        proximoId("A"), transInit.getId(), lugarMap.getId(), exprNovoElemento));
             }
         }
     }
 
-    // responsável por criar arcos de entrada e saída entre um lugar e uma
-    // transição, considerando a mutação de estado e as condicionais aplicáveis.
-    private void criarArcoDuplo(Lugar lugar, Transicao transicao, GerenciadorVariaveis ger, FuncaoSolidity func,
+    private String construirTuplaListasConsumo(int k) {
+        if (k == 1) {
+            return "1`L1";
+        }
+        List<String> elems = new ArrayList<>();
+        for (int i = 1; i <= k; i++) {
+            elems.add("L" + i);
+        }
+        return "1`(" + String.join(", ", elems) + ")";
+    }
+
+    private String construirTuplaListasAtualizada(int k, int indiceAlvo, String varChaveK) {
+        if (k == 1) {
+            return "1`(" + varChaveK + " :: L1)";
+        }
+        List<String> elems = new ArrayList<>();
+        for (int i = 0; i < k; i++) {
+            String nomeLista = "L" + (i + 1);
+            if (i == indiceAlvo) {
+                elems.add(varChaveK + " :: " + nomeLista);
+            } else {
+                elems.add(nomeLista);
+            }
+        }
+        return "1`(" + String.join(", ", elems) + ")";
+    }
+
+    private Arco buscarArcoFornecedorDaChave(
+            String idTransicao, String idLugarMap, String varChaveK, List<Arco> todosArcos) {
+        for (Arco a : todosArcos) {
+            if (a.getTargetId().equals(idTransicao) && !a.getSourceId().equals(idLugarMap)) {
+                if (expressaoContemVariavelSML(a.getExpression(), varChaveK)) {
+                    return a;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean expressaoContemVariavelSML(String expr, String varSML) {
+        String limpa = expr.replace("1`", "").replace("(", "").replace(")", "");
+        String[] partes = limpa.split(",");
+        for (String p : partes) {
+            if (p.trim().equals(varSML))
+                return true;
+        }
+        return false;
+    }
+
+    private String extrairPrimeiroElementoTuplaSML(String expr) {
+        int abre = expr.indexOf('(');
+        int virgula = expr.indexOf(',');
+        if (abre != -1 && virgula != -1 && virgula > abre) {
+            return expr.substring(abre + 1, virgula).trim();
+        }
+        return null;
+    }
+
+    private String mapearParametrosEntrada(FuncaoSolidity func, Lugar lugarParam, GerenciadorVariaveis gv) {
+        if (func.getParametros().isEmpty()) {
+            String varBool = gv.obterOuAlocarVariavel("parconstrutor", "BOOL");
+            return "1`" + varBool;
+        }
+        List<String> vars = new ArrayList<>();
+        for (Map.Entry<String, String> entry : func.getParametros().entrySet()) {
+            String nomeParam = entry.getKey();
+            String tipoSML = mapearTipoPrimitivoSML(entry.getValue());
+            vars.add(gv.obterOuAlocarVariavel(nomeParam, tipoSML));
+        }
+        if (vars.size() == 1) {
+            return "1`" + vars.get(0);
+        }
+        return "1`(" + String.join(", ", vars) + ")";
+    }
+
+    private String construirExpressaoSaidaVariavel(
+            FuncaoSolidity func,
+            VariavelGlobal var,
+            OperacaoSolidity op,
+            String varChaveSML,
+            String varValorAntigoSML,
+            GerenciadorVariaveis gv,
             ListasInfo info) {
-        String arcoId1 = gerarId("arco");
-        String arcoId2 = gerarId("arco");
 
-        OperacaoSolidity operacao = buscarOperacaoDaVariavel(lugar.getName(), func.getNome(), info);
-        boolean isPush = operacao != null && operacao.getOperador().equals("PUSH");
-        boolean isPop = operacao != null && operacao.getOperador().equals("POP");
+        String tokenOriginal = ehVariavelIndexada(var)
+                ? "1`(" + varChaveSML + ", " + varValorAntigoSML + ")"
+                : "1`" + varValorAntigoSML;
 
-        String indiceVar = "Z";
-        if (lugar.getColorSet().contains("x") && operacao != null) {
-            String dest = operacao.getVariavelDestino();
-            int idx1 = dest.indexOf('[');
-            int idx2 = dest.indexOf(']');
-            if (idx1 > 0 && idx2 > idx1) {
-                String indexOriginal = dest.substring(idx1 + 1, idx2).trim();
-                indiceVar = ger.getVariavel(indexOriginal, "default");
-            } else if (!isPush) {
-                indiceVar = ger.getVariavel("idx", "default");
-            }
+        if (op == null) {
+            return tokenOriginal;
         }
 
-        String expressaoEntrada;
-        if (lugar.getColorSet().contains("x")) {
-            expressaoEntrada = "(" + indiceVar + ", " + ger.getVariavel(lugar.getName() + "_val", "default") + ")";
+        String novoValorSML = traduzirExpressaoDireitaSML(op, var, varValorAntigoSML, gv, info);
+        String tokenModificado = ehVariavelIndexada(var)
+                ? "1`(" + varChaveSML + ", " + novoValorSML + ")"
+                : "1`" + novoValorSML;
+
+        List<Condicional> conds = buscarCondicionaisDaFuncao(func.getNome(), info);
+        if (conds.isEmpty()) {
+            return tokenModificado;
+        }
+
+        Condicional c = conds.get(0);
+        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, info);
+        if (c.getTipo().equalsIgnoreCase("if_revert") || c.getTipo().equalsIgnoreCase("if")) {
+            return "if " + condSML + " then " + tokenOriginal + " else " + tokenModificado;
         } else {
-            expressaoEntrada = ger.getVariavel(lugar.getName(), lugar.getColorSet());
-        }
-
-        if (isPop && lugar.getColorSet().contains("x")) {
-            List<String> varsParametros = new ArrayList<>();
-            for (String nomeParam : func.getParametros().keySet()) {
-                varsParametros.add(ger.getVariavel(nomeParam, "default"));
-            }
-            if (!varsParametros.isEmpty()) {
-                expressaoEntrada = "(idx, (" + String.join(", ", varsParametros) + "))";
-            }
-        }
-
-        String expressaoSaida = expressaoEntrada;
-        if (operacao != null) {
-            expressaoSaida = traduzirOperacaoParaRPC(operacao, expressaoEntrada, ger);
-        }
-
-        String expressaoFinalSaida;
-        if (isPush || isPop) {
-            expressaoFinalSaida = expressaoSaida;
-        } else {
-            expressaoFinalSaida = aplicarCondicionaisRPC(expressaoSaida, expressaoEntrada, func.getNome(), info, ger,
-                    false);
-        }
-
-        boolean criaEntrada = (!func.isConstructor() || lugar.getName().equals("msg.sender")) && !isPush;
-
-        // CORREÇÃO: Oráculos como msg.sender DEVEM ter arco de saída para evitar
-        // deadlock consumindo o token global
-        boolean criaSaida = !isPop;
-
-        if (criaEntrada) {
-            arcos.add(new Arco(arcoId1, lugar.getId(), transicao.getId(), expressaoEntrada));
-        }
-
-        if (criaSaida) {
-            arcos.add(new Arco(arcoId2, transicao.getId(), lugar.getId(), expressaoFinalSaida));
+            return "if " + condSML + " then " + tokenModificado + " else " + tokenOriginal;
         }
     }
 
-    // responsável por avaliar se a transição possui regras de guarda
-    // Ele concatena modifiers e condições primárias globais à assinatura da
-    // transição. Para o construtor, atribui estritamente a guarda true
-    private String construirGuardExpressao(FuncaoSolidity func, ListasInfo info) {
-        if (func.isConstructor())
-            return "true";
+    private String aplicarCondicionaisEmChamada(
+            String tokenChamada, List<Condicional> conds, GerenciadorVariaveis gv, ListasInfo info) {
+        if (conds.isEmpty()) {
+            return tokenChamada;
+        }
+        Condicional c = conds.get(0);
+        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, info);
+        if (c.getTipo().equalsIgnoreCase("if_revert") || c.getTipo().equalsIgnoreCase("if")) {
+            return "if " + condSML + " then empty else " + tokenChamada;
+        } else {
+            return "if " + condSML + " then " + tokenChamada + " else empty";
+        }
+    }
 
-        StringBuilder guard = new StringBuilder();
+    private String traduzirExpressaoDireitaSML(
+            OperacaoSolidity op,
+            VariavelGlobal var,
+            String varValorAntigoSML,
+            GerenciadorVariaveis gv,
+            ListasInfo info) {
 
-        for (Condicional cond : info.getCondicionais()) {
-            if (cond.getNomeFuncao().equals(func.getNome())) {
-                if (cond.getTipo().equals("require") || cond.getTipo().equals("assert")) {
-                    if (guard.length() > 0)
-                        guard.append(" AND ");
-                    guard.append(cond.getExpressao());
+        String opStr = op.getOperador().trim();
+        if (opStr.equals("+=")) {
+            String rhs = op.getOperandos().isEmpty() ? "0" : op.getOperandos().get(op.getOperandos().size() - 1);
+            String rhsSML = resolverOperandoParaSML(rhs, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+            return varValorAntigoSML + "+" + rhsSML;
+        } else if (opStr.equals("-=")) {
+            String rhs = op.getOperandos().isEmpty() ? "0" : op.getOperandos().get(op.getOperandos().size() - 1);
+            String rhsSML = resolverOperandoParaSML(rhs, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+            return varValorAntigoSML + "-" + rhsSML;
+        } else {
+            if (!op.getOperandos().isEmpty()) {
+                List<String> partes = new ArrayList<>();
+                for (String operando : op.getOperandos()) {
+                    partes.add(resolverOperandoParaSML(operando, mapearTipoPrimitivoSML(var.getTipo()), gv, info));
+                }
+                if (opStr.equals("=") || partes.size() == 1) {
+                    return partes.get(partes.size() - 1);
+                }
+                return String.join(opStr, partes);
+            }
+            return resolverOperandoParaSML(opStr, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+        }
+    }
+
+    private String traduzirCondicaoParaSML(String exprSol, GerenciadorVariaveis gv, ListasInfo info) {
+        String s = exprSol.trim();
+        s = s.replace("==", "=").replace("!=", "<>");
+
+        List<Map.Entry<String, String>> entradas = new ArrayList<>(gv.getMapaSolidityParaSML().entrySet());
+        entradas.sort((a, b) -> Integer.compare(b.getKey().length(), a.getKey().length()));
+
+        for (Map.Entry<String, String> entry : entradas) {
+            String solVar = entry.getKey();
+            String smlVar = entry.getValue();
+            if (s.contains(solVar)) {
+                s = s.replace(solVar, smlVar);
+            }
+        }
+        return s;
+    }
+
+    private String resolverOperandoParaSML(
+            String operando, String tipoPadraoSML, GerenciadorVariaveis gv, ListasInfo info) {
+        String limpo = operando.trim();
+        if (gv.buscarVariavelSML(limpo) != null) {
+            return gv.buscarVariavelSML(limpo);
+        }
+        if (limpo.matches("\\d+") || limpo.equals("true") || limpo.equals("false")) {
+            return limpo;
+        }
+        if (limpo.contains(".")) {
+            String[] partes = limpo.split("\\.");
+            if (partes.length == 2 && !limpo.equals("msg.sender")) {
+                for (EnumSolidity en : info.getEnums()) {
+                    if (en.getNome().equals(partes[0])) {
+                        return partes[1];
+                    }
                 }
             }
         }
+        return gv.obterOuAlocarVariavel(limpo, tipoPadraoSML);
+    }
 
-        for (String modifier : func.getModifiers()) {
-            if (modifier.contains("onlyOwner") || modifier.contains("nonReentrant")) {
-                if (guard.length() > 0)
-                    guard.append(" AND ");
-                guard.append(modifier);
+    private boolean ehVariavelIndexada(VariavelGlobal var) {
+        return var.getTipoIndice() != null && !var.getTipoIndice().trim().isEmpty();
+    }
+
+    private String obterColorSetVariavel(VariavelGlobal var) {
+        String tipoBase = mapearTipoPrimitivoSML(var.getTipo());
+        if (ehVariavelIndexada(var)) {
+            String tipoIndice = mapearTipoPrimitivoSML(var.getTipoIndice());
+            return tipoIndice + "x" + tipoBase;
+        }
+        return tipoBase;
+    }
+
+    private String obterColorSetParametros(Map<String, String> parametros) {
+        List<String> tipos = new ArrayList<>();
+        for (String t : parametros.values()) {
+            tipos.add(mapearTipoPrimitivoSML(t));
+        }
+        return String.join("x", tipos);
+    }
+
+    public static String mapearTipoPrimitivoSML(String tipoSolidity) {
+        if (tipoSolidity == null)
+            return "UINT";
+        String t = tipoSolidity.trim().toLowerCase();
+        if (t.startsWith("uint") || t.startsWith("int"))
+            return "UINT";
+        if (t.startsWith("address"))
+            return "ADDRESS";
+        if (t.equals("bool"))
+            return "BOOL";
+        if (t.equals("string") || t.startsWith("bytes"))
+            return "STRING";
+        return tipoSolidity.trim().toUpperCase();
+    }
+
+    private String obterValorPadraoPrimitivo(String tipoSolidity, ListasInfo info) {
+        String t = tipoSolidity.trim();
+        if (t.startsWith("uint") || t.startsWith("int"))
+            return "0";
+        if (t.equals("bool"))
+            return "false";
+        if (t.startsWith("address"))
+            return "\"0x0\"";
+        if (t.equals("string") || t.startsWith("bytes"))
+            return "\"\"";
+        for (EnumSolidity en : info.getEnums()) {
+            if (en.getNome().equals(t) && !en.getValores().isEmpty()) {
+                return en.getValores().get(0);
             }
         }
-
-        return guard.toString();
+        return "0";
     }
 
-    private String gerarId(String prefix) {
-        return prefix + "_" + (idCounter++);
+    private String formatarLiteralSML(String valor, String tipo, ListasInfo info) {
+        String v = valor.trim();
+        if (v.contains(".")) {
+            String[] partes = v.split("\\.");
+            if (partes.length == 2)
+                return partes[1];
+        }
+        if (tipo.startsWith("address") && !v.startsWith("\"")) {
+            return "\"" + v + "\"";
+        }
+        return v;
     }
 
-    private String extrairNomeVariavel(String expr) {
-        if (expr == null)
-            return "";
-        expr = expr.trim();
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_.]*)").matcher(expr);
-        if (matcher.find())
-            return matcher.group(1);
-        return expr;
+    private boolean funcaoUsaMsgSender(String nomeFuncao, ListasInfo info) {
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getNomeFuncao().equals(nomeFuncao)) {
+                if (op.getVariavelDestino().contains("msg.sender")
+                        || op.getOperador().contains("msg.sender")
+                        || op.getOperandos().contains("msg.sender")) {
+                    return true;
+                }
+            }
+        }
+        for (Condicional cond : info.getCondicionais()) {
+            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains("msg.sender")) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    public void exibirResultados() {
-        System.out.println("\n========== RESULTADOS DA RPC ==========");
-        System.out.println("\nLUGARES (" + lugares.size() + "):");
-        for (Lugar lugar : lugares) {
-            System.out.println("  " + lugar);
+    private boolean variavelUsadaNaFuncao(String nomeVar, String nomeFuncao, ListasInfo info) {
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getNomeFuncao().equals(nomeFuncao)) {
+                if (pertenceAVariavel(op.getVariavelDestino(), nomeVar))
+                    return true;
+                for (String oper : op.getOperandos()) {
+                    if (pertenceAVariavel(oper, nomeVar))
+                        return true;
+                }
+            }
         }
+        for (Condicional cond : info.getCondicionais()) {
+            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains(nomeVar)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
-        System.out.println("\nTRANSIÇÕES (" + transicoes.size() + "):");
-        for (Transicao trans : transicoes) {
-            System.out.println("  " + trans);
-        }
+    private boolean pertenceAVariavel(String expressao, String nomeVar) {
+        String e = expressao.trim();
+        return e.equals(nomeVar) || e.startsWith(nomeVar + "[");
+    }
 
-        System.out.println("\nARCOS (" + arcos.size() + "):");
-        for (Arco arco : arcos) {
-            System.out.println("  " + arco);
+    private OperacaoSolidity buscarOperacaoVariavelNaFuncao(
+            String nomeFuncao, String nomeVar, ListasInfo info) {
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getNomeFuncao().equals(nomeFuncao)
+                    && pertenceAVariavel(op.getVariavelDestino(), nomeVar)) {
+                return op;
+            }
         }
-        System.out.println("=========================================\n");
+        return null;
+    }
+
+    private String descobrirExpressaoIndiceUsada(String nomeVar, String nomeFuncao, ListasInfo info) {
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getNomeFuncao().equals(nomeFuncao)) {
+                if (op.getVariavelDestino().startsWith(nomeVar + "[")) {
+                    return extrairIndiceAcesso(op.getVariavelDestino());
+                }
+                for (String oper : op.getOperandos()) {
+                    if (oper.startsWith(nomeVar + "[")) {
+                        return extrairIndiceAcesso(oper);
+                    }
+                }
+            }
+        }
+        for (Condicional cond : info.getCondicionais()) {
+            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains(nomeVar + "[")) {
+                int idx = cond.getExpressao().indexOf(nomeVar + "[");
+                String sub = cond.getExpressao().substring(idx);
+                return extrairIndiceAcesso(sub);
+            }
+        }
+        return "msg.sender";
+    }
+
+    private String extrairIndiceAcesso(String exprComColchetes) {
+        int abre = exprComColchetes.indexOf('[');
+        int fecha = exprComColchetes.indexOf(']', abre);
+        if (abre != -1 && fecha != -1) {
+            return exprComColchetes.substring(abre + 1, fecha).trim();
+        }
+        return exprComColchetes;
+    }
+
+    private List<Condicional> buscarCondicionaisDaFuncao(String nomeFuncao, ListasInfo info) {
+        List<Condicional> lista = new ArrayList<>();
+        for (Condicional c : info.getCondicionais()) {
+            if (c.getNomeFuncao().equals(nomeFuncao)) {
+                lista.add(c);
+            }
+        }
+        return lista;
     }
 
     public List<Lugar> getLugares() {
@@ -641,34 +861,75 @@ public class RPCBuilder {
         return arcos;
     }
 
-    private String gerarMarcacaoInicialOracle(String colorSet) {
-        if (colorSet.contains("x")) {
-            String[] tipos = colorSet.split("x");
-            List<String> valores = new ArrayList<>();
-            for (String t : tipos) {
-                valores.add(obterValorDefaultPorTipo(t.trim()));
-            }
-            return "(" + String.join(", ", valores) + ")";
-        }
-        return obterValorDefaultPorTipo(colorSet);
+    public Map<String, GerenciadorVariaveis> getGerenciadoresLocais() {
+        return gerenciadoresLocais;
     }
 
-    /**
-     * Retorna um valor simbólico ou zerado válido para o tipo CPN.
-     */
-    private String obterValorDefaultPorTipo(String tipo) {
-        switch (tipo) {
-            case "ADDRESS":
-                return "\"0x_ext\""; // Endereço genérico simulando um usuário externo
-            case "UINT":
-            case "INT":
-                return "0"; // Valor numérico padrão
-            case "BOOL":
-                return "false";
-            case "STRING":
-                return "\"\"";
-            default:
-                return "ext_data"; // Fallback para Structs/Enums
+    public Map<String, String> getVariavelListaPorVar() {
+        return variavelListaPorVar;
+    }
+
+    public Map<String, String> getTipoListaPorVar() {
+        return tipoListaPorVar;
+    }
+
+    public void exibirResultados() {
+        Map<String, String> nomesElementos = new HashMap<>();
+        for (Lugar l : this.lugares) {
+            nomesElementos.put(l.getId(), l.getName());
         }
+        for (Transicao t : this.transicoes) {
+            nomesElementos.put(t.getId(), t.getName());
+        }
+
+        System.out.println("==========================================================");
+        System.out.println("         RESULTADO DA TRANSFORMACAO (RPC GERADA)          ");
+        System.out.println("==========================================================");
+
+        System.out.println("\n--- LUGARES (P) [" + this.lugares.size() + "] ---");
+        for (Lugar l : this.lugares) {
+            String marcacao = (l.getInitialMarking() == null || l.getInitialMarking().isEmpty())
+                    ? "vazio"
+                    : l.getInitialMarking();
+            String tipoLugar = l.isOracle() ? " [ORACULO]" : "";
+            System.out.printf("  %-4s | Nome: %-20s | Cor: %-18s | Init: %-10s%s%n",
+                    l.getId(), l.getName(), l.getColorSet(), marcacao, tipoLugar);
+        }
+
+        System.out.println("\n--- TRANSICOES (T) [" + this.transicoes.size() + "] ---");
+        for (Transicao t : this.transicoes) {
+            String guarda = (t.getGuard() == null || t.getGuard().isEmpty())
+                    ? "true"
+                    : t.getGuard();
+            System.out.printf("  %-4s | Nome: %-22s | Guarda: %s%n",
+                    t.getId(), t.getName(), guarda);
+        }
+
+        System.out.println("\n--- ARCOS (A) [" + this.arcos.size() + "] ---");
+        for (Arco a : this.arcos) {
+            String nomeOrigem = nomesElementos.getOrDefault(a.getSourceId(), a.getSourceId());
+            String nomeDestino = nomesElementos.getOrDefault(a.getTargetId(), a.getTargetId());
+            String origemFormatada = a.getSourceId() + " (" + nomeOrigem + ")";
+            String destinoFormatada = a.getTargetId() + " (" + nomeDestino + ")";
+
+            System.out.printf("  %-4s | %-26s ---> %-26s | Expr: %s%n",
+                    a.getId(), origemFormatada, destinoFormatada, a.getExpression());
+        }
+
+        if (this.variavelListaPorVar != null && !this.variavelListaPorVar.isEmpty()) {
+            System.out.println("\n--- MAPEAMENTO DO LUGAR CONSOLIDADO (chaves_init) ---");
+            for (Map.Entry<String, String> entry : this.variavelListaPorVar.entrySet()) {
+                String nomeVar = entry.getKey();
+                String varLista = entry.getValue();
+                String tipoLista = this.tipoListaPorVar.get(nomeVar);
+                System.out.printf("  Variavel Indexada: %-15s -> Lista SML: %-4s (%s)%n",
+                        nomeVar, varLista, tipoLista);
+            }
+        }
+        System.out.println("==========================================================\n");
+    }
+
+    public void mostrarResultado() {
+        exibirResultados();
     }
 }

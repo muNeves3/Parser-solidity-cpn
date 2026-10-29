@@ -63,7 +63,6 @@ sol_rdp/antlr/SolidityParser$ConstructorDefinitionContext.class
 sol_rdp/antlr/SolidityParser$VariableDeclarationContext.class
 SolidityParser$BitXorOperationContext.class
 SolidityParser$YulSwitchStatementContext.class
-SolidityLexer.class
 SolidityParser$StringLiteralContext.class
 sol_rdp/antlr/SolidityParser$ForStatementContext.class
 sol_rdp/antlr/SolidityParser$OrOperationContext.class
@@ -95,7 +94,6 @@ SolidityParser$BitOrOperationContext.class
 SolidityParser$StructMemberContext.class
 SolidityParser$EmitStatementContext.class
 sol_rdp/antlr/SolidityParser$IfStatementContext.class
-SolidityLexer.tokens
 SolidityParser$YulFunctionCallContext.class
 SolidityParser$ShiftOperationContext.class
 sol_rdp/antlr/SolidityParser$ParameterListContext.class
@@ -128,7 +126,6 @@ SolidityParser$ParameterListContext.class
 SolidityParser$PrimaryExpressionContext.class
 sol_rdp/antlr/SolidityParser$ExpressionStatementContext.class
 sol_rdp/antlr/SolidityParser$VariableDeclarationTupleContext.class
-SolidityParser.tokens
 sol_rdp/antlr/SolidityParser$InheritanceSpecifierContext.class
 sol_rdp/antlr/SolidityParser$NamedArgumentContext.class
 SolidityParser$FunctionCallContext.class
@@ -153,7 +150,6 @@ sol_rdp/antlr/SolidityParser$YulIfStatementContext.class
 sol_rdp/antlr/SolidityParser$AddSubOperationContext.class
 SolidityParser$FunctionDefinitionContext.class
 SolidityParser$StatementContext.class
-SolidityParser.interp
 sol_rdp/antlr/SolidityParser$IdentifierPathContext.class
 sol_rdp/antlr/SolidityParser$BitXorOperationContext.class
 SolidityParser$ModifierInvocationContext.class
@@ -163,7 +159,6 @@ sol_rdp/antlr/SolidityParser$EnumDefinitionContext.class
 SolidityParser$ExpressionContext.class
 SolidityParser$OrOperationContext.class
 SolidityParser$BitAndOperationContext.class
-SolidityLexer.interp
 SolidityParser$ContractBodyElementContext.class
 SolidityParser$YulBlockContext.class
 sol_rdp/antlr/SolidityLexer.class

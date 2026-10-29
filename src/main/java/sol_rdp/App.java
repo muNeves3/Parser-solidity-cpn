@@ -39,8 +39,8 @@ public class App {
                 info.exibirResumo();
 
                 System.out.println("\n========== FASE 2: CONSTRUÇÃO DA RPC ==========");
-                RPCBuilder builder = new RPCBuilder(info);
-                builder.construirRPC();
+                RPCBuilder builder = new RPCBuilder();
+                builder.construirRPC(info);
                 builder.exibirResultados();
 
                 // Exportar o resultado
@@ -49,7 +49,7 @@ public class App {
                         builder.getLugares(),
                         builder.getTransicoes(),
                         builder.getArcos(),
-                        "saida/contrato_modelo.cpn");
+                        null, null, null, info, "saida/contrato_modelo.cpn");
 
             } else {
                 System.err.println("Erro: Análise retornou null");

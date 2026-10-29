@@ -1,124 +1,104 @@
 package sol_rdp.rpc;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class GerenciadorVariaveis {
 
-    // Gerador de caracteres por tipo
-    private Map<String, Character> controleTipos;
+    // Mapa: nome da variável no Solidity -> variável SML no arco (ex: "receiver" ->
+    // "Z")
+    private final Map<String, String> mapaSolidityParaSML;
+    // Mapa: variável SML -> ColorSet SML (ex: "Z" -> "ADDRESS")
+    private final Map<String, String> mapaVariavelParaCor;
 
-    // Memória da Transição Atual: "Nome da Variável Solidity" -> "Letra da RPC"
-    private Map<String, String> variaveisMapeadasNaTransicao;
+    private static final String[] POOL_ADDRESS = { "Z", "D", "W", "U" };
+    private static final String[] POOL_UINT = { "E", "F", "P", "Q", "V", "T", "I" };
+    private static final String[] POOL_BOOL = { "B", "A", "C" };
+    private static final String[] POOL_GERAL = { "X", "M", "N", "R", "S" };
+
+    private int idxAddress = 0;
+    private int idxUint = 0;
+    private int idxBool = 0;
+    private int idxGeral = 0;
 
     public GerenciadorVariaveis() {
-        iniciarNovoEscopoDeTransicao();
+        this.mapaSolidityParaSML = new LinkedHashMap<>();
+        this.mapaVariavelParaCor = new LinkedHashMap<>();
     }
 
     /**
-     * Prepara a memória para uma nova transição.
+     * Obtém a variável SML já associada ao identificador Solidity nesta transição
+     * ou aloca uma nova variável única do ColorSet correspondente.
      */
-    public void iniciarNovoEscopoDeTransicao() {
-        this.variaveisMapeadasNaTransicao = new HashMap<>();
-        this.controleTipos = new HashMap<>();
-
-        // Mapeamento dos tipos primitivos mais comuns do Solidity
-        this.controleTipos.put("address", 'Z'); // Z, Y, X...
-        this.controleTipos.put("uint", 'E'); // E, F, G...
-        this.controleTipos.put("int", 'E'); // E, F, G...
-        this.controleTipos.put("bool", 'A'); // A, B, C...
-        this.controleTipos.put("string", 'S'); // S, T, U...
-        this.controleTipos.put("bytes", 'V'); // V, W...
-
-        // Fallback genérico de segurança
-        this.controleTipos.put("default", 'M');
-    }
-
-    /**
-     * Retorna a letra da RPC para uma variável Solidity dentro da transição atual.
-     */
-    public String getVariavel(String nomeVariavelSolidity, String tipoSolidity) {
-
-        // 1. Variável já foi processada nesta transição?
-        if (variaveisMapeadasNaTransicao.containsKey(nomeVariavelSolidity)) {
-            return variaveisMapeadasNaTransicao.get(nomeVariavelSolidity);
+    public String obterOuAlocarVariavel(String nomeSolidity, String colorSet) {
+        String chave = nomeSolidity.trim();
+        if (mapaSolidityParaSML.containsKey(chave)) {
+            return mapaSolidityParaSML.get(chave);
         }
 
-        // 2. Normaliza o tipo e lida com Structs/Enums (User-Defined Types)
-        String tipoSanitizado = normalizarTipo(tipoSolidity);
-
-        // Se for um tipo customizado que ainda não tem um contador, criamos um
-        // dinamicamente
-        if (!controleTipos.containsKey(tipoSanitizado)) {
-            registrarTipoCustomizado(tipoSanitizado);
-        }
-
-        // 3. Pega o caractere atual para este tipo
-        char letraGerada = controleTipos.get(tipoSanitizado);
-        String nomeVariavelRPC = String.valueOf(letraGerada);
-
-        // 4. Atualiza o alfabeto para a próxima variável DESTE TIPO
-        if (tipoSanitizado.equals("address")) {
-            controleTipos.put(tipoSanitizado, (char) (letraGerada - 1)); // Decrementa
+        String varSML;
+        // Padroniza msg.sender sempre como "Y" para consistência entre arcos
+        if (chave.equals("msg.sender") || chave.equals("msg.send")) {
+            varSML = "Y";
+        } else if (chave.equals("parconstrutor")) {
+            varSML = "A";
         } else {
-            controleTipos.put(tipoSanitizado, (char) (letraGerada + 1)); // Incrementa
+            varSML = proximoSimboloDisponivel(colorSet);
         }
 
-        // 5. Salva na memória do escopo atual
-        variaveisMapeadasNaTransicao.put(nomeVariavelSolidity, nomeVariavelRPC);
-
-        return nomeVariavelRPC;
+        mapaSolidityParaSML.put(chave, varSML);
+        mapaVariavelParaCor.put(varSML, colorSet);
+        return varSML;
     }
 
-    /**
-     * Normaliza as variações dos tipos primitivos do Solidity.
-     */
-    private String normalizarTipo(String tipo) {
-        if (tipo == null || tipo.trim().isEmpty())
-            return "default";
-
-        String t = tipo.trim();
-
-        // Trata todas as variações de uint (uint8, uint256, etc)
-        if (t.startsWith("uint"))
-            return "uint";
-
-        // Trata todas as variações de int (int8, int256, etc)
-        if (t.startsWith("int"))
-            return "int";
-
-        // Trata variações de bytes (bytes1, bytes32, etc)
-        if (t.startsWith("bytes"))
-            return "bytes";
-
-        // Tipos estritos
-        if (t.equals("address") || t.equals("address payable"))
-            return "address";
-        if (t.equals("bool"))
-            return "bool";
-        if (t.equals("string"))
-            return "string";
-
-        // Se não for nenhum tipo primitivo mapeado, assumimos que é um Struct ou Enum
-        // (ex: "Pessoa")
-        // Retornamos o próprio nome para que ganhe um contador dinâmico.
-        return t;
+    private String proximoSimboloDisponivel(String colorSet) {
+        String cor = colorSet.toUpperCase();
+        if (cor.equals("ADDRESS")) {
+            while (idxAddress < POOL_ADDRESS.length) {
+                String cand = POOL_ADDRESS[idxAddress++];
+                if (!mapaVariavelParaCor.containsKey(cand))
+                    return cand;
+            }
+            return "ADDR_" + (++idxAddress);
+        } else if (cor.equals("UINT") || cor.equals("INT")) {
+            while (idxUint < POOL_UINT.length) {
+                String cand = POOL_UINT[idxUint++];
+                if (!mapaVariavelParaCor.containsKey(cand))
+                    return cand;
+            }
+            return "U_" + (++idxUint);
+        } else if (cor.equals("BOOL")) {
+            while (idxBool < POOL_BOOL.length) {
+                String cand = POOL_BOOL[idxBool++];
+                if (!mapaVariavelParaCor.containsKey(cand))
+                    return cand;
+            }
+            return "B_" + (++idxBool);
+        } else {
+            while (idxGeral < POOL_GERAL.length) {
+                String cand = POOL_GERAL[idxGeral++];
+                if (!mapaVariavelParaCor.containsKey(cand))
+                    return cand;
+            }
+            return "V_" + (++idxGeral);
+        }
     }
 
-    /**
-     * Cria um contador de letras baseando-se na primeira letra do Struct/Enum.
-     */
-    private void registrarTipoCustomizado(String tipoCustomizado) {
-        // Pega a primeira letra do tipo customizado (ex: "Pessoa" -> 'P')
-        char primeiraLetra = tipoCustomizado.toUpperCase().charAt(0);
-
-        // Para evitar colisões com tipos nativos (ex: Uint que usa 'E', 'F'),
-        // poderíamos adicionar uma validação aqui. Para simplificar, iniciamos o
-        // contador.
-        this.controleTipos.put(tipoCustomizado, primeiraLetra);
+    public void registrarVariavelExplicita(String nomeSolidity, String varSML, String colorSet) {
+        mapaSolidityParaSML.put(nomeSolidity.trim(), varSML);
+        mapaVariavelParaCor.put(varSML, colorSet);
     }
 
-    public Map<String, String> getMapaVariaveis() {
-        return variaveisMapeadasNaTransicao;
+    public String buscarVariavelSML(String nomeSolidity) {
+        return mapaSolidityParaSML.get(nomeSolidity.trim());
+    }
+
+    public Map<String, String> getMapaSolidityParaSML() {
+        return new HashMap<>(mapaSolidityParaSML);
+    }
+
+    public Map<String, String> getMapaVariavelParaCor() {
+        return new LinkedHashMap<>(mapaVariavelParaCor);
     }
 }
