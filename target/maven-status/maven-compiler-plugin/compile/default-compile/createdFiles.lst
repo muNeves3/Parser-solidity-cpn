@@ -126,6 +126,7 @@ SolidityParser$ParameterListContext.class
 SolidityParser$PrimaryExpressionContext.class
 sol_rdp/antlr/SolidityParser$ExpressionStatementContext.class
 sol_rdp/antlr/SolidityParser$VariableDeclarationTupleContext.class
+SolidityParser.tokens
 sol_rdp/antlr/SolidityParser$InheritanceSpecifierContext.class
 sol_rdp/antlr/SolidityParser$NamedArgumentContext.class
 SolidityParser$FunctionCallContext.class

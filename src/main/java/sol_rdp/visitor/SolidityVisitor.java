@@ -1,10 +1,9 @@
 package sol_rdp.visitor;
 
-import org.antlr.v4.runtime.tree.ParseTree;
-import org.antlr.v4.runtime.tree.RuleNode;
-import sol_rdp.antlr.SolidityParserBaseVisitor;
 import sol_rdp.antlr.SolidityParser;
+import sol_rdp.antlr.SolidityParserBaseVisitor;
 import sol_rdp.solidity.*;
+
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,8 +23,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return info;
     }
 
-    // ponto de entrada do contrato, continua a leitura através do visitChildren
-    // por fim retorna o objeto populado
     @Override
     public Object visitSourceUnit(SolidityParser.SourceUnitContext ctx) {
         info = new ListasInfo("Contrato");
@@ -33,9 +30,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return info;
     }
 
-    // captura o nome e corpo do contrato
-    // dependendo do tipo de elemento do corpo, chama o método correspondente para
-    // extrair informações
     @Override
     public Object visitContractDefinition(SolidityParser.ContractDefinitionContext ctx) {
         if (ctx.identifier() != null) {
@@ -62,10 +56,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return null;
     }
 
-    // captura as variáveis globais, extrai nome, tipo, visibilidade e valor inicial
-    // o método emprega limpezas textuais via regex com a classe Pattern para isolar
-    // estritamente o identificador da variável, ignorando modificadores
-    // como constant ou immutable.
     @Override
     public Object visitStateVariableDeclaration(SolidityParser.StateVariableDeclarationContext ctx) {
         String texto = ctx.getText();
@@ -75,14 +65,12 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         String tipoIndice = "";
 
         if (ctx.typeName() != null) {
-            tipoBruto = ctx.typeName().getText();
+            tipoBruto = ctx.typeName().getText().trim();
             tipoIndice = extrairTipoIndice(ctx.typeName());
             tipo = extrairTipoValor(ctx.typeName());
         }
 
-        String nome = "";
         String visibilidade = "internal";
-
         if (texto.contains("public")) {
             visibilidade = "public";
         } else if (texto.contains("private")) {
@@ -93,31 +81,33 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             visibilidade = "internal";
         }
 
-        // 2. Extrair nome usando o tipoBruto para a limpeza
-        String semTipo = texto;
-        System.out.println("SEMTIPO INICIAL: " + semTipo);
-        if (!tipoBruto.isEmpty()) {
-            semTipo = texto.replaceFirst(Pattern.quote(tipoBruto), "").trim();
-        } else if (!tipo.isEmpty()) {
-            semTipo = texto.replaceFirst(Pattern.quote(tipo), "").trim();
-        }
-        System.out.println("SEMTIPO FINAL: " + semTipo);
+        String nome = "";
+        if (ctx.identifier() != null && !ctx.identifier().getText().trim().isEmpty()) {
+            nome = ctx.identifier().getText().trim();
+        } else {
+            String semTipo = texto;
+            if (!tipoBruto.isEmpty()) {
+                semTipo = texto.replaceFirst(Pattern.quote(tipoBruto), "").trim();
+            } else if (!tipo.isEmpty()) {
+                semTipo = texto.replaceFirst(Pattern.quote(tipo), "").trim();
+            }
 
-        semTipo = semTipo.replaceAll("public|private|internal|external|constant|immutable", "").trim();
+            semTipo = semTipo.replaceAll("public|private|internal|external|constant|immutable", "").trim();
 
-        System.out.println("SEMTIPO FINAL 2 : " + semTipo);
-
-        // O primeiro token restante é o nome
-        if (!semTipo.isEmpty()) {
-            String[] partes = semTipo.split(";")[0].split("[=,]");
-            String primeiraParte = partes[0].trim();
-            // Extrair apenas identificador válido
-            if (primeiraParte.matches(".*[a-zA-Z_][a-zA-Z0-9_]*.*")) {
-                nome = primeiraParte.replaceAll("[^a-zA-Z0-9_]", "");
-                if (nome.isEmpty() || nome.length() < 1) {
-                    nome = primeiraParte.trim();
+            if (!semTipo.isEmpty()) {
+                String[] partes = semTipo.split(";")[0].split("[=,]");
+                String primeiraParte = partes[0].trim();
+                if (primeiraParte.matches(".*[a-zA-Z_][a-zA-Z0-9_]*.*")) {
+                    nome = primeiraParte.replaceAll("[^a-zA-Z0-9_]", "");
+                    if (nome.isEmpty()) {
+                        nome = primeiraParte.trim();
+                    }
                 }
             }
+        }
+
+        if (tipoIndice.isEmpty() && (tipoBruto.contains("[") || texto.split("=")[0].contains("["))) {
+            tipoIndice = "uint";
         }
 
         String valorInicial = "";
@@ -133,12 +123,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return null;
     }
 
-    // Usado para "descascar" tipo mais complexos como mapping(address =>
-    // mapping(address => uint))
-    // o método navega recursivamente até o nó mais
-    // profundo para retornar apenas o tipo final do valor (neste caso, bool). Se
-    // for um
-    // array (ex: uint[]), realiza o corte do colchete.
     private String extrairTipoValor(SolidityParser.TypeNameContext typeNameCtx) {
         if (typeNameCtx == null) {
             return "";
@@ -150,20 +134,16 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
 
         String textoTipo = typeNameCtx.getText().trim();
-        if (textoTipo.endsWith("]")) {
+        if (textoTipo.contains("[")) {
             int indexColchete = textoTipo.indexOf('[');
             if (indexColchete > 0) {
-                return textoTipo.substring(0, indexColchete);
+                return textoTipo.substring(0, indexColchete).trim();
             }
         }
 
         return textoTipo;
     }
 
-    // Complementar ao método anterior, é responsável por capturar o domínio de
-    // busca de uma variável.
-    // Para mappings, extrai a chave
-    // Para vetores (arrays), impõe dinamicamente o tipo int
     private String extrairTipoIndice(SolidityParser.TypeNameContext typeNameCtx) {
         if (typeNameCtx == null) {
             return "";
@@ -175,17 +155,14 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
 
         String textoTipo = typeNameCtx.getText().trim();
-        if (textoTipo.contains("[]")) {
+        if (textoTipo.contains("[") && textoTipo.endsWith("]")) {
             return "uint";
         }
 
         return "";
     }
 
-    // proccessa o construtor
-    // Utiliza um LinkedHashMap para armazenar os parâmetros, garantindo que a ordem
-    // de
-    // declaração seja preservada
+    @Override
     public Object visitConstructorDefinition(SolidityParser.ConstructorDefinitionContext ctx) {
         String nomeFuncao = "constructor";
         funcaoAtual = nomeFuncao;
@@ -197,15 +174,14 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         List<String> modifiers = new ArrayList<>();
         boolean isConstructor = true;
 
-        // Extrair parâmetros
-        if (ctx.arguments != null) {
+        if (ctx.arguments != null && ctx.arguments.parameters != null) {
             for (SolidityParser.ParameterDeclarationContext paramDecl : ctx.arguments.parameters) {
                 String tipoParam = paramDecl.type.getText();
                 String nomeParam = "";
                 if (paramDecl.name != null) {
                     nomeParam = paramDecl.name.getText();
                 }
-                if (nomeParam.isEmpty() || nomeParam.equals("")) {
+                if (nomeParam.isEmpty()) {
                     nomeParam = "param_" + parametros.size();
                 }
                 parametros.put(nomeParam, tipoParam);
@@ -229,9 +205,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return null;
     }
 
-    // Realiza a extração das funções padrão
-    // Captura o nome, os modificadores de estado e a visibilidade
-    // O bloco de execução funcional interno é então repassado para analisarBloco
     @Override
     public Object visitFunctionDefinition(SolidityParser.FunctionDefinitionContext ctx) {
         String nomeFuncao = "";
@@ -268,8 +241,7 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 if (paramDecl.name != null) {
                     nomeParam = paramDecl.name.getText();
                 }
-                // Se não tem nome, usar um genérico baseado no tipo
-                if (nomeParam.isEmpty() || nomeParam.equals("")) {
+                if (nomeParam.isEmpty()) {
                     nomeParam = "param_" + parametros.size();
                 }
                 parametros.put(nomeParam, tipoParam);
@@ -300,11 +272,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
 
         funcaoAtual = "";
-        return visitChildren(ctx);
+        return null;
     }
 
-    // Recebe o escopo em texto bruto e dispara processadores paralelos:
-    // extrairCondicionais, extrairOperacoes e extrairChamadas
     private void analisarBloco(String blocoTexto) {
         if (blocoTexto == null || blocoTexto.isEmpty()) {
             return;
@@ -315,7 +285,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         extrairOperacoes(blocoTexto);
         extrairChamadas(blocoTexto);
 
-        // Mapeamento das Variáveis Globais Inerentes à EVM
         if (blocoTexto.contains("msg.sender")) {
             registrarVariavelEVM("msg.sender", "address");
         }
@@ -324,9 +293,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
     }
 
-    // Se o analisarBloco detecta o uso das variáveis de rede, este método força a
-    // criação
-    // de uma Variável Global correspondente
     private void registrarVariavelEVM(String nome, String tipo) {
         boolean existe = info.getVariaveisGlobais().stream().anyMatch(v -> v.getNome().equals(nome));
         if (!existe) {
@@ -334,8 +300,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
     }
 
-    // Varre o código em busca de construtos de barreira e de ramificação (require,
-    // assert, if).
     private void extrairCondicionais(String texto, String palavraChave) {
         String marcador = palavraChave + "(";
         int inicio = 0;
@@ -346,13 +310,15 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
                 break;
             }
 
+            if (pos > 0 && Character.isJavaIdentifierPart(texto.charAt(pos - 1))) {
+                inicio = pos + marcador.length();
+                continue;
+            }
+
             int abertura = pos + marcador.length() - 1;
             int profundidade = 0;
             int i = abertura + 1;
             boolean encontrouFechamento = false;
-
-            if (texto.contains("type"))
-                break;
 
             for (; i < texto.length(); i++) {
                 char c = texto.charAt(i);
@@ -380,7 +346,8 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             String tipoCond = palavraChave;
             if (palavraChave.equals("if")) {
                 String resto = texto.substring(i + 1).trim();
-                if (resto.startsWith("revert") || resto.startsWith("return")) {
+                if (resto.startsWith("revert") || resto.startsWith("return")
+                        || resto.startsWith("{revert") || resto.startsWith("{return")) {
                     tipoCond = "if_revert";
                 }
             }
@@ -390,13 +357,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
     }
 
-    // Devido à complexidade de mensagens de erro concatenadas no Solidity,
-    // este método utiliza um algoritmo de contgem de profundidade de parênteses
-    // (profundidade++ e profundidade–).
-    // Ele garante que apenas a expressão booleana (ex: x > 0 && y < 10) seja
-    // extraída,
-    // eliminando por exemplo, strings com mensagem de erro que são irrelevantes
-    // para a avaliação
     private int encontrarVirgulaTopo(String texto) {
         int profundidade = 0;
         for (int i = 0; i < texto.length(); i++) {
@@ -414,27 +374,21 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         return -1;
     }
 
-    // método para extrair operações de atribuição e aritméticas do código Solidity
-    // Utiliza uma regex com Lookbehind ((<!require(|assert(|if ()) para ignorar
-    // verificações de
-    // estado. Ele foca estritamente em operadores de atribuição (=, +=, -=),
-    // mapeando
-    // o alvo da mutação e desmembrando o lado direito da equação para catalogar
-    // todas as variáveis envolvidas.
     private void extrairOperacoes(String texto) {
-        // 1. Extração Original de Atribuições (=, +=, -=, etc.)
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+        Pattern pattern = Pattern.compile(
                 "(?<!require\\(|assert\\(|if\\s?\\()\\b([a-zA-Z_][a-zA-Z0-9_.]*(?:\\[[^\\]]*\\])*)\\s*([+\\-*/%]=|=(?!=))\\s*([^;]+)");
-        java.util.regex.Matcher matcher = pattern.matcher(texto);
+        Matcher matcher = pattern.matcher(texto);
         Set<String> jaProcessadas = new HashSet<>();
 
         while (matcher.find()) {
-            String varDestinoCompleto = matcher.group(1).trim();
+            String varDestinoBruto = matcher.group(1).trim();
+            String varDestinoCompleto = removerPrefixoTipoLocal(varDestinoBruto);
             String operador = matcher.group(2).trim();
             String ladoDireito = matcher.group(3).trim();
 
-            if (varDestinoCompleto.equals("msg") || varDestinoCompleto.equals("block"))
+            if (varDestinoCompleto.equals("msg") || varDestinoCompleto.equals("block")) {
                 continue;
+            }
 
             String assinatura = varDestinoCompleto + operador + ladoDireito;
             if (!jaProcessadas.contains(assinatura)) {
@@ -447,9 +401,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             }
         }
 
-        // 2. Captura de injeção em Arrays (.push) convertendo para +=
-        java.util.regex.Matcher pushMatcher = java.util.regex.Pattern
-                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.push\\(([^;]+)\\)\\s*;").matcher(texto);
+        Matcher pushMatcher = Pattern
+                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.push\\(([^;]+)\\)\\s*;")
+                .matcher(texto);
         while (pushMatcher.find()) {
             String varDestino = pushMatcher.group(1).trim();
             String argumento = pushMatcher.group(2).trim();
@@ -461,7 +415,8 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             }
         }
 
-        java.util.regex.Matcher popMatcher = java.util.regex.Pattern.compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.pop\\(\\)")
+        Matcher popMatcher = Pattern
+                .compile("([a-zA-Z_][a-zA-Z0-9_.]*)\\.pop\\(\\)")
                 .matcher(texto);
         while (popMatcher.find()) {
             String varDestino = popMatcher.group(1).trim();
@@ -474,12 +429,32 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
     }
 
-    // identifica todas as chamadas de função dentro do bloco de código, ignorando
-    // chamadas a funções nativas da EVM e funções internas como require, assert,
-    // revert, if, while e for.
+    /**
+     * Remove prefixos de tipos elementares colados ao nome de variáveis locais pelo
+     * getText() do ANTLR
+     * (ex: "uint256half" -> "half", "uinta" -> "a"), preservando variáveis globais
+     * do contrato.
+     */
+    private String removerPrefixoTipoLocal(String ident) {
+        if (ident == null || ident.isEmpty())
+            return "";
+        String s = ident.trim();
+        for (VariavelGlobal vg : info.getVariaveisGlobais()) {
+            if (s.equals(vg.getNome()) || s.startsWith(vg.getNome() + "[")) {
+                return s;
+            }
+        }
+        String limpo = s.replaceFirst(
+                "^(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bool|address(payable)?|string|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?)(memory|storage|calldata)?",
+                "").trim();
+        return limpo.isEmpty() ? s : limpo;
+    }
+
     private void extrairChamadas(String texto) {
-        // Limpa blocos de revert para não ler Custom Errors como se fossem funções
-        String textoLimpo = texto.replaceAll("(?s)revert\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(.*?\\);?", "");
+        String textoLimpo = texto
+                .replaceAll("(?s)revert\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(.*?\\);?", "")
+                .replaceAll("(?s)emit\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(.*?\\);?", "");
+
         Pattern pattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
         Matcher matcher = pattern.matcher(textoLimpo);
 
@@ -491,8 +466,9 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
             if (!deveIgnorarChamada(nomeFuncaoAlvo) && !jaProcessadas.contains(nomeFuncaoAlvo)) {
                 List<String> argumentos = new ArrayList<>();
                 if (!args.isEmpty()) {
-                    for (String arg : args.split(","))
+                    for (String arg : args.split(",")) {
                         argumentos.add(arg.trim());
+                    }
                 }
                 ChamadaFuncao chamada = new ChamadaFuncao(funcaoAtual, nomeFuncaoAlvo, argumentos, 0);
                 info.adicionarChamada(chamada);
@@ -501,12 +477,6 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         }
     }
 
-    // Garante que palavras-chave de controle de fluxo do Solidity (if, while, for,
-    // emit, revert)
-    // ou conversores de tipos primitivos nativos (ex: uint256(...)) não sejam
-    // equivocadamente
-    // classificados como sub-funções pelo parser, mantendo a integridade da tabela
-    // de chamadas.
     private boolean deveIgnorarChamada(String nomeFuncaoAlvo) {
         if (nomeFuncaoAlvo == null || nomeFuncaoAlvo.isEmpty()) {
             return true;
@@ -514,37 +484,23 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
         if (nomeFuncaoAlvo.equals("require") || nomeFuncaoAlvo.equals("assert") ||
                 nomeFuncaoAlvo.equals("revert") || nomeFuncaoAlvo.equals("if") ||
                 nomeFuncaoAlvo.equals("while") || nomeFuncaoAlvo.equals("for") ||
-                nomeFuncaoAlvo.equals("push") || nomeFuncaoAlvo.equals("pop") || nomeFuncaoAlvo.equals("type")) {
+                nomeFuncaoAlvo.equals("push") || nomeFuncaoAlvo.equals("pop") ||
+                nomeFuncaoAlvo.equals("type") || nomeFuncaoAlvo.equals("send") ||
+                nomeFuncaoAlvo.equals("transfer")) {
             return true;
         }
-        if (nomeFuncaoAlvo.startsWith("emit")) {
+        if (nomeFuncaoAlvo.startsWith("emit") || nomeFuncaoAlvo.startsWith("revert")) {
             return true;
         }
         return nomeFuncaoAlvo.matches(
                 "(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?|address|bool|string|fixed|ufixed)");
     }
 
-    // responsável por extrair o nome base de uma variável, removendo quaisquer
-    // índices de array ou propriedades de objeto.
-    private String extrairNomeBaseVariavel(String expr) {
-        if (expr == null) {
-            return "";
-        }
-
-        Matcher matcher = Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_]*)").matcher(expr.trim());
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-        return "";
-    }
-
     @Override
     public Object visitEnumDefinition(SolidityParser.EnumDefinitionContext ctx) {
-        // O primeiro identifier é o nome do enum. Os seguintes são os valores.
         String nomeEnum = ctx.identifier(0).getText();
         List<String> valores = new ArrayList<>();
 
-        // Itera a partir do índice 1 para pegar apenas os valores do bloco
         for (int i = 1; i < ctx.identifier().size(); i++) {
             valores.add(ctx.identifier(i).getText());
         }
@@ -556,14 +512,12 @@ public class SolidityVisitor extends SolidityParserBaseVisitor<Object> {
     @Override
     public Object visitStructDefinition(SolidityParser.StructDefinitionContext ctx) {
         String nomeStruct = ctx.identifier().getText();
-        // LinkedHashMap para preservar a ordem declarada no Solidity
         Map<String, String> campos = new LinkedHashMap<>();
 
         if (ctx.structMember() != null) {
             for (SolidityParser.StructMemberContext membroCtx : ctx.structMember()) {
                 String tipoCampo = extrairTipoValor(membroCtx.typeName());
                 String nomeCampo = membroCtx.identifier().getText();
-
                 campos.put(nomeCampo, tipoCampo);
             }
         }

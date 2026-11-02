@@ -19,6 +19,11 @@ import java.util.regex.Pattern;
 public class ExportadorCPN {
 
     private int cpnIdCounter = 1412300000;
+    private String nomeContrato = "";
+
+    public ExportadorCPN(String nomeContrato) {
+        this.nomeContrato = nomeContrato;
+    }
 
     private String nextCpnId() {
         return "ID" + (++cpnIdCounter);
@@ -87,9 +92,10 @@ public class ExportadorCPN {
 
             // 2. Página da Rede de Petri
             String pageId = "ID6";
-            String pageName = (info != null && info.getNomeContrato() != null && !info.getNomeContrato().isEmpty())
-                    ? info.getNomeContrato()
-                    : "New Page";
+            String pageName = (info != null && info.getNomeContrato() != null && !info.getNomeContrato().isEmpty()
+                    && !this.nomeContrato.isEmpty())
+                            ? info.getNomeContrato()
+                            : "New Page";
 
             out.println("    <page id=\"" + pageId + "\">");
             out.println("      <pageattr name=\"" + escaparXML(pageName) + "\"/>");

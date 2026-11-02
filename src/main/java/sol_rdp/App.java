@@ -43,13 +43,16 @@ public class App {
                 builder.construirRPC(info);
                 builder.exibirResultados();
 
+                String contratoEntrada = args[0].split("/")[1];
+                String nomeContratoEntrada = contratoEntrada.substring(0, contratoEntrada.length() - 4);
+
                 // Exportar o resultado
-                ExportadorCPN exportador = new ExportadorCPN();
+                ExportadorCPN exportador = new ExportadorCPN(args[0]);
                 exportador.exportar(
                         builder.getLugares(),
                         builder.getTransicoes(),
                         builder.getArcos(),
-                        null, null, null, info, "saida/contrato_modelo.cpn");
+                        null, null, null, info, "saida/" + nomeContratoEntrada + ".cpn");
 
             } else {
                 System.err.println("Erro: Análise retornou null");

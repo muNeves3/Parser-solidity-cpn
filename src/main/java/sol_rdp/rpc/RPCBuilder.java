@@ -61,6 +61,7 @@ public class RPCBuilder {
     }
 
     public void construirRPC(ListasInfo info) {
+        normalizarVariaveisGlobais(info);
         garantirExistenciaConstrutor(info);
         criarLugaresVariaveis(info);
         criarLugaresOraculos(info);
@@ -70,10 +71,56 @@ public class RPCBuilder {
         criarSubredeInicializacaoSobDemanda(info);
     }
 
-    /**
-     * Garante que todo contrato tenha uma função construtora para inicializar o
-     * estado da EVM.
-     */
+    private void normalizarVariaveisGlobais(ListasInfo info) {
+        for (VariavelGlobal var : info.getVariaveisGlobais()) {
+            if (ehVariavelEspecialMsg(var.getNome()))
+                continue;
+
+            String tipo = (var.getTipo() != null) ? var.getTipo().trim() : "";
+            String nome = (var.getNome() != null) ? var.getNome().trim() : "";
+            String tipoIndice = (var.getTipoIndice() != null) ? var.getTipoIndice().trim() : "";
+
+            if (tipo.contains("[")) {
+                String tipoBase = tipo.substring(0, tipo.indexOf('[')).trim();
+                var.setTipo(tipoBase);
+                if (tipoIndice.isEmpty()) {
+                    var.setTipoIndice("uint");
+                }
+            }
+
+            if (nome.contains("[")) {
+                String nomeBase = nome.substring(0, nome.indexOf('[')).trim();
+                var.setNome(nomeBase);
+                if (var.getTipoIndice() == null || var.getTipoIndice().trim().isEmpty()) {
+                    var.setTipoIndice("uint");
+                }
+            }
+
+            if (var.getTipoIndice() == null || var.getTipoIndice().trim().isEmpty()) {
+                if (variavelAcessadaComColchetesNoContrato(var.getNome(), info)) {
+                    var.setTipoIndice("uint");
+                }
+            }
+        }
+    }
+
+    private boolean variavelAcessadaComColchetesNoContrato(String nomeVar, ListasInfo info) {
+        String padrao = nomeVar + "[";
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getVariavelDestino().contains(padrao))
+                return true;
+            for (String oper : op.getOperandos()) {
+                if (oper.contains(padrao))
+                    return true;
+            }
+        }
+        for (Condicional cond : info.getCondicionais()) {
+            if (cond.getExpressao().contains(padrao))
+                return true;
+        }
+        return false;
+    }
+
     private void garantirExistenciaConstrutor(ListasInfo info) {
         boolean temConstrutor = false;
         for (FuncaoSolidity f : info.getFuncoes()) {
@@ -98,10 +145,6 @@ public class RPCBuilder {
         }
     }
 
-    /**
-     * Passo 1a: Cria os lugares para as variáveis globais e o lugar único
-     * consolidado chaves_init.
-     */
     public void criarLugaresVariaveis(ListasInfo info) {
         int idxLista = 1;
         for (VariavelGlobal var : info.getVariaveisGlobais()) {
@@ -128,14 +171,11 @@ public class RPCBuilder {
             }
         }
 
-        // Se houver pelo menos uma variável indexada (mapping ou vetor), cria o lugar
-        // único chaves_init
         if (!variaveisIndexadas.isEmpty()) {
             String colorSetChavesInit;
             if (variaveisIndexadas.size() == 1) {
                 colorSetChavesInit = tipoListaPorVar.get(variaveisIndexadas.get(0).getNome());
             } else {
-                // Usa o padrão "ADDRESS_LISTxUINT_LIST" compatível com CPN Tools
                 colorSetChavesInit = String.join("x", tipoListaPorVar.values());
             }
             this.lugarChavesInit = new Lugar(proximoId("P"), "chaves_init", colorSetChavesInit, "", false);
@@ -146,27 +186,36 @@ public class RPCBuilder {
 
     /**
      * Passo 1b: Cria os lugares de parâmetros das funções, parconstrutor e lugares
-     * oráculo (msg.send).
+     * oráculo (msg.send e msg.value).
      */
     public void criarLugaresOraculos(ListasInfo info) {
         boolean usaMsgSender = false;
+        boolean usaMsgValue = false;
+
         for (OperacaoSolidity op : info.getOperacoes()) {
-            if (op.getOperador().contains("msg.sender") || op.getVariavelDestino().contains("msg.sender")
-                    || op.getOperandos().contains("msg.sender")) {
+            String textoOp = op.getVariavelDestino() + " " + op.getOperador() + " " + op.getOperandos().toString();
+            if (textoOp.contains("msg.sender"))
                 usaMsgSender = true;
-                break;
-            }
+            if (textoOp.contains("msg.value"))
+                usaMsgValue = true;
         }
         for (Condicional cond : info.getCondicionais()) {
-            if (cond.getExpressao().contains("msg.sender")) {
+            if (cond.getExpressao().contains("msg.sender"))
                 usaMsgSender = true;
-                break;
-            }
+            if (cond.getExpressao().contains("msg.value"))
+                usaMsgValue = true;
         }
+
         if (usaMsgSender && !lugaresVariaveis.containsKey("msg.send")) {
             Lugar msgSend = new Lugar(proximoId("P"), "msg.send", "ADDRESS", "", true);
             this.lugares.add(msgSend);
             this.lugaresVariaveis.put("msg.send", msgSend);
+        }
+
+        if (usaMsgValue && !lugaresVariaveis.containsKey("msg.value")) {
+            Lugar msgVal = new Lugar(proximoId("P"), "msg.value", "UINT", "", true);
+            this.lugares.add(msgVal);
+            this.lugaresVariaveis.put("msg.value", msgVal);
         }
 
         for (FuncaoSolidity func : info.getFuncoes()) {
@@ -194,9 +243,6 @@ public class RPCBuilder {
         }
     }
 
-    /**
-     * Passo 2: Cria as transições correspondentes às funções do contrato.
-     */
     public void criarTransicoesFuncoes(ListasInfo info) {
         for (FuncaoSolidity func : info.getFuncoes()) {
             String nomeTrans = ehFuncaoConstrutora(func) ? "construtor" : func.getNome();
@@ -207,10 +253,6 @@ public class RPCBuilder {
         }
     }
 
-    /**
-     * Passo 3 e 4: Cria os arcos de parâmetros, inicialização no construtor e arcos
-     * duplos nas funções.
-     */
     public void criarArcosFluxoDados(ListasInfo info) {
         for (FuncaoSolidity func : info.getFuncoes()) {
             Transicao trans = this.transicoesFunc.get(func.getNome());
@@ -231,12 +273,21 @@ public class RPCBuilder {
                 }
             }
 
-            // 2. Conecta msg.send se a função utilizar msg.sender
+            // 2a. Conecta msg.send se a função utilizar msg.sender
             if (funcaoUsaMsgSender(func.getNome(), info)) {
                 Lugar lugarMsg = this.lugaresVariaveis.get("msg.send");
                 if (lugarMsg != null) {
                     String varMsg = gv.obterOuAlocarVariavel("msg.sender", "ADDRESS");
                     this.arcos.add(new Arco(proximoId("A"), lugarMsg.getId(), trans.getId(), "1`" + varMsg));
+                }
+            }
+
+            // 2b. Conecta msg.value se a função utilizar msg.value
+            if (funcaoUsaMsgValue(func.getNome(), info)) {
+                Lugar lugarVal = this.lugaresVariaveis.get("msg.value");
+                if (lugarVal != null) {
+                    String varVal = gv.obterOuAlocarVariavel("msg.value", "UINT");
+                    this.arcos.add(new Arco(proximoId("A"), lugarVal.getId(), trans.getId(), "1`" + varVal));
                 }
             }
 
@@ -249,17 +300,11 @@ public class RPCBuilder {
         }
     }
 
-    /**
-     * Regra do Construtor:
-     * - Variáveis escalares: recebem arco simples de saída com valor atribuído
-     * (Caso 1) ou padrão da EVM (Caso 2).
-     * - Variáveis indexadas: o construtor emite a tupla de listas iniciais para o
-     * lugar único chaves_init.
-     */
     private void criarArcosInicializacaoConstrutor(
             FuncaoSolidity func, Transicao transConst, GerenciadorVariaveis gv, ListasInfo info) {
 
         List<String> listasIniciais = new ArrayList<>();
+        Map<String, String> expressoesLocais = construirMapaVariaveisLocais(func.getNome(), gv, info);
 
         for (VariavelGlobal var : info.getVariaveisGlobais()) {
             if (ehVariavelEspecialMsg(var.getNome())) {
@@ -273,12 +318,11 @@ public class RPCBuilder {
             OperacaoSolidity opAtrib = buscarOperacaoVariavelNaFuncao(func.getNome(), var.getNome(), info);
 
             if (ehVariavelIndexada(var)) {
-                // Verifica se o construtor atribuiu alguma posição específica do mapping/vetor
                 if (opAtrib != null && opAtrib.getVariavelDestino().contains("[")) {
                     String chaveSol = extrairIndiceAcesso(opAtrib.getVariavelDestino());
                     String tipoIndiceSML = mapearTipoPrimitivoSML(var.getTipoIndice());
-                    String varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, info);
-                    String valSML = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, info);
+                    String varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, expressoesLocais, info);
+                    String valSML = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, expressoesLocais, info);
 
                     this.arcos.add(new Arco(
                             proximoId("A"), transConst.getId(), lugarVar.getId(),
@@ -288,10 +332,9 @@ public class RPCBuilder {
                     listasIniciais.add("[]");
                 }
             } else {
-                // Variável escalar (Caso 1 ou Caso 2)
                 String valorSaida;
                 if (opAtrib != null) {
-                    valorSaida = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, info);
+                    valorSaida = traduzirExpressaoDireitaSML(opAtrib, var, null, gv, expressoesLocais, info);
                 } else if (var.getValorInicial() != null && !var.getValorInicial().trim().isEmpty()) {
                     valorSaida = formatarLiteralSML(var.getValorInicial(), var.getTipo(), info);
                 } else {
@@ -302,7 +345,6 @@ public class RPCBuilder {
             }
         }
 
-        // Arco simples saindo do construtor para o lugar consolidado chaves_init
         if (this.lugarChavesInit != null && !listasIniciais.isEmpty()) {
             String exprChavesInit;
             if (listasIniciais.size() == 1) {
@@ -315,60 +357,126 @@ public class RPCBuilder {
         }
     }
 
-    /**
-     * Regra para funções normais: cria arcos duplos (leitura e escrita/restituição)
-     * para variáveis globais usadas.
-     */
     private void criarArcosDuplosFuncao(
             FuncaoSolidity func, Transicao trans, GerenciadorVariaveis gv, ListasInfo info) {
 
+        List<VariavelGlobal> varsUsadas = new ArrayList<>();
+        Map<String, String> chavesSMLPorVar = new LinkedHashMap<>();
+        Map<String, String> valoresAntigosSMLPorVar = new LinkedHashMap<>();
+
+        // 1ª Passada: Arcos de Entrada (LugarVar -> Transicao)
         for (VariavelGlobal var : info.getVariaveisGlobais()) {
-            if (ehVariavelEspecialMsg(var.getNome())) {
+            if (ehVariavelEspecialMsg(var.getNome()))
                 continue;
-            }
-            if (!variavelUsadaNaFuncao(var.getNome(), func.getNome(), info)) {
+            if (!variavelUsadaNaFuncao(var.getNome(), func.getNome(), info))
                 continue;
-            }
+
             Lugar lugarVar = this.lugaresVariaveis.get(var.getNome());
-            if (lugarVar == null) {
+            if (lugarVar == null)
                 continue;
-            }
 
-            OperacaoSolidity op = buscarOperacaoVariavelNaFuncao(func.getNome(), var.getNome(), info);
-
+            varsUsadas.add(var);
             String exprEntrada;
-            String varValorAntigoSML;
-            String varChaveSML = null;
 
             if (ehVariavelIndexada(var)) {
                 String chaveSol = descobrirExpressaoIndiceUsada(var.getNome(), func.getNome(), info);
                 String tipoIndiceSML = mapearTipoPrimitivoSML(var.getTipoIndice());
-                varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, info);
+                String varChaveSML = resolverOperandoParaSML(chaveSol, tipoIndiceSML, gv, Collections.emptyMap(), info);
 
                 String tipoValorSML = mapearTipoPrimitivoSML(var.getTipo());
-                varValorAntigoSML = gv.obterOuAlocarVariavel(
+                String varValorAntigoSML = gv.obterOuAlocarVariavel(
                         var.getNome() + "[" + chaveSol + "]", tipoValorSML);
+
+                chavesSMLPorVar.put(var.getNome(), varChaveSML);
+                valoresAntigosSMLPorVar.put(var.getNome(), varValorAntigoSML);
                 exprEntrada = "1`(" + varChaveSML + ", " + varValorAntigoSML + ")";
             } else {
                 String tipoSML = mapearTipoPrimitivoSML(var.getTipo());
-                varValorAntigoSML = gv.obterOuAlocarVariavel(var.getNome(), tipoSML);
+                String varValorAntigoSML = gv.obterOuAlocarVariavel(var.getNome(), tipoSML);
+                valoresAntigosSMLPorVar.put(var.getNome(), varValorAntigoSML);
                 exprEntrada = "1`" + varValorAntigoSML;
             }
 
-            // Arco de Entrada (LugarVar -> Transicao)
             this.arcos.add(new Arco(proximoId("A"), lugarVar.getId(), trans.getId(), exprEntrada));
+        }
 
-            // Arco de Saída (Transicao -> LugarVar)
+        // Resolve variáveis locais declaradas dentro da função como expressões
+        // matemáticas SML
+        Map<String, String> expressoesLocais = construirMapaVariaveisLocais(func.getNome(), gv, info);
+
+        // 2ª Passada: Arcos de Saída (Transicao -> LugarVar)
+        for (VariavelGlobal var : varsUsadas) {
+            Lugar lugarVar = this.lugaresVariaveis.get(var.getNome());
+            OperacaoSolidity op = buscarOperacaoVariavelNaFuncao(func.getNome(), var.getNome(), info);
+            String varChaveSML = chavesSMLPorVar.get(var.getNome());
+            String varValorAntigoSML = valoresAntigosSMLPorVar.get(var.getNome());
+
             String exprSaida = construirExpressaoSaidaVariavel(
-                    func, var, op, varChaveSML, varValorAntigoSML, gv, info);
+                    func, var, op, varChaveSML, varValorAntigoSML, gv, expressoesLocais, info);
             this.arcos.add(new Arco(proximoId("A"), trans.getId(), lugarVar.getId(), exprSaida));
         }
     }
 
     /**
-     * Passo 3b: Cria os arcos de chamadas de subfunções internas (ex: mint ->
-     * parincreaseBalance).
+     * Constrói um mapa de variáveis locais da função para suas respectivas
+     * expressões matemáticas em SML
+     * (ex: "half" -> "(E div 2)", "remainder" -> "(E - (E div 2))").
      */
+    private Map<String, String> construirMapaVariaveisLocais(
+            String nomeFuncao, GerenciadorVariaveis gv, ListasInfo info) {
+
+        Map<String, String> expressoesLocais = new LinkedHashMap<>();
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (!op.getNomeFuncao().equals(nomeFuncao))
+                continue;
+
+            String destBruto = op.getVariavelDestino().trim();
+            String destLimpo = limparPrefixoTipoLocal(destBruto, info);
+
+            if (ehVariavelGlobalDoContrato(destLimpo, info) || ehVariavelEspecialMsg(destLimpo)) {
+                continue;
+            }
+
+            String rhsSol = op.getOperandos().isEmpty()
+                    ? op.getOperador()
+                    : op.getOperandos().get(op.getOperandos().size() - 1);
+
+            String exprSML = traduzirExpressaoMatematicaSML(rhsSol, "UINT", gv, expressoesLocais, info);
+            if (exprSML.contains("+") || exprSML.contains("-") || exprSML.contains("*")
+                    || exprSML.contains("div") || exprSML.contains("mod")) {
+                exprSML = "(" + exprSML + ")";
+            }
+            expressoesLocais.put(destLimpo, exprSML);
+            if (!destBruto.equals(destLimpo)) {
+                expressoesLocais.put(destBruto, exprSML);
+            }
+        }
+        return expressoesLocais;
+    }
+
+    private boolean ehVariavelGlobalDoContrato(String expr, ListasInfo info) {
+        String e = expr.trim();
+        for (VariavelGlobal var : info.getVariaveisGlobais()) {
+            if (e.equals(var.getNome()) || e.startsWith(var.getNome() + "[")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String limparPrefixoTipoLocal(String ident, ListasInfo info) {
+        if (ident == null || ident.isEmpty())
+            return "";
+        String s = ident.trim();
+        if (ehVariavelGlobalDoContrato(s, info))
+            return s;
+
+        String limpo = s.replaceFirst(
+                "^(u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?|bool|address(payable)?|string|bytes(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)?)(memory|storage|calldata)?",
+                "").trim();
+        return limpo.isEmpty() ? s : limpo;
+    }
+
     public void criarArcosDeChamadas(ListasInfo info) {
         for (ChamadaFuncao call : info.getChamadas()) {
             String nomeA = call.getNomeFuncaoChamadora();
@@ -394,11 +502,12 @@ public class RPCBuilder {
             }
 
             GerenciadorVariaveis gv = this.gerenciadoresLocais.get(funcEscopo);
+            Map<String, String> expressoesLocais = construirMapaVariaveisLocais(funcEscopo, gv, info);
             List<String> argsSML = new ArrayList<>();
             for (String argSol : call.getArgumentos()) {
                 String varSML = gv.buscarVariavelSML(argSol.trim());
                 if (varSML == null) {
-                    varSML = resolverOperandoParaSML(argSol.trim(), "UINT", gv, info);
+                    varSML = traduzirExpressaoMatematicaSML(argSol.trim(), "UINT", gv, expressoesLocais, info);
                 }
                 argsSML.add(varSML);
             }
@@ -408,17 +517,13 @@ public class RPCBuilder {
                     : "1`(" + String.join(", ", argsSML) + ")";
 
             List<Condicional> conds = buscarCondicionaisDaFuncao(funcEscopo, info);
-            String exprArcoChamada = aplicarCondicionaisEmChamada(tokenChamada, conds, gv, info);
+            String exprArcoChamada = aplicarCondicionaisEmChamada(tokenChamada, conds, gv, expressoesLocais, info);
 
             this.arcos.add(new Arco(
                     proximoId("A"), transChamadora.getId(), lugarDestino.getId(), exprArcoChamada));
         }
     }
 
-    /**
-     * Nova Etapa: Cria as transições de inicialização sob demanda (init_<var>_<K>)
-     * conectadas ao lugar único consolidado chaves_init (Opção A).
-     */
     public void criarSubredeInicializacaoSobDemanda(ListasInfo info) {
         if (this.lugarChavesInit == null || this.variaveisIndexadas.isEmpty()) {
             return;
@@ -465,17 +570,13 @@ public class RPCBuilder {
                 Transicao transInit = new Transicao(proximoId("T"), nomeTransInit, guardaSML);
                 this.transicoes.add(transInit);
 
-                // Registra a variável de lista no gerenciador para exportação garantida no
-                // Globbox
                 GerenciadorVariaveis gvInit = new GerenciadorVariaveis();
                 gvInit.registrarVariavelExplicita(varListaAlvo, varListaAlvo, tipoListaAlvo);
                 this.gerenciadoresLocais.put(nomeTransInit, gvInit);
 
-                // 1. Arco duplo entre o lugar fornecedor da chave K e a transição init
                 this.arcos.add(new Arco(proximoId("A"), idLugarOrigem, transInit.getId(), exprOrigem));
                 this.arcos.add(new Arco(proximoId("A"), transInit.getId(), idLugarOrigem, exprOrigem));
 
-                // 2. Arco duplo entre o lugar consolidado chaves_init e a transição init
                 String exprConsumoChaves = construirTuplaListasConsumo(totalIndexadas);
                 String exprProducaoChaves = construirTuplaListasAtualizada(
                         totalIndexadas, posNaTupla, varChaveK);
@@ -484,7 +585,6 @@ public class RPCBuilder {
                 this.arcos.add(new Arco(
                         proximoId("A"), transInit.getId(), this.lugarChavesInit.getId(), exprProducaoChaves));
 
-                // 3. Arco simples de saída da transição init para o lugar do mapeamento/vetor
                 String exprNovoElemento = "1`(" + varChaveK + ", " + valorPadraoElem + ")";
                 this.arcos.add(new Arco(
                         proximoId("A"), transInit.getId(), lugarMap.getId(), exprNovoElemento));
@@ -574,6 +674,7 @@ public class RPCBuilder {
             String varChaveSML,
             String varValorAntigoSML,
             GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
             ListasInfo info) {
 
         String tokenOriginal = ehVariavelIndexada(var)
@@ -584,10 +685,19 @@ public class RPCBuilder {
             return tokenOriginal;
         }
 
-        String novoValorSML = traduzirExpressaoDireitaSML(op, var, varValorAntigoSML, gv, info);
-        String tokenModificado = ehVariavelIndexada(var)
-                ? "1`(" + varChaveSML + ", " + novoValorSML + ")"
-                : "1`" + novoValorSML;
+        String novoValorSML = traduzirExpressaoDireitaSML(op, var, varValorAntigoSML, gv, expressoesLocais, info);
+        String tokenModificado;
+        if (ehVariavelIndexada(var)) {
+            tokenModificado = "1`(" + varChaveSML + ", " + novoValorSML + ")";
+        } else {
+            if (novoValorSML.contains("+") || novoValorSML.contains("-")
+                    || novoValorSML.contains("*") || novoValorSML.contains("div")
+                    || novoValorSML.contains("mod")) {
+                tokenModificado = "1`(" + novoValorSML + ")";
+            } else {
+                tokenModificado = "1`" + novoValorSML;
+            }
+        }
 
         List<Condicional> conds = buscarCondicionaisDaFuncao(func.getNome(), info);
         if (conds.isEmpty()) {
@@ -595,7 +705,7 @@ public class RPCBuilder {
         }
 
         Condicional c = conds.get(0);
-        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, info);
+        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, expressoesLocais, info);
         if (c.getTipo().equalsIgnoreCase("if_revert") || c.getTipo().equalsIgnoreCase("if")) {
             return "if " + condSML + " then " + tokenOriginal + " else " + tokenModificado;
         } else {
@@ -604,12 +714,16 @@ public class RPCBuilder {
     }
 
     private String aplicarCondicionaisEmChamada(
-            String tokenChamada, List<Condicional> conds, GerenciadorVariaveis gv, ListasInfo info) {
+            String tokenChamada,
+            List<Condicional> conds,
+            GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
+            ListasInfo info) {
         if (conds.isEmpty()) {
             return tokenChamada;
         }
         Condicional c = conds.get(0);
-        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, info);
+        String condSML = traduzirCondicaoParaSML(c.getExpressao(), gv, expressoesLocais, info);
         if (c.getTipo().equalsIgnoreCase("if_revert") || c.getTipo().equalsIgnoreCase("if")) {
             return "if " + condSML + " then empty else " + tokenChamada;
         } else {
@@ -622,36 +736,147 @@ public class RPCBuilder {
             VariavelGlobal var,
             String varValorAntigoSML,
             GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
             ListasInfo info) {
 
         String opStr = op.getOperador().trim();
+        String tipoAlvoSML = mapearTipoPrimitivoSML(var.getTipo());
+
         if (opStr.equals("+=")) {
             String rhs = op.getOperandos().isEmpty() ? "0" : op.getOperandos().get(op.getOperandos().size() - 1);
-            String rhsSML = resolverOperandoParaSML(rhs, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+            String rhsSML = traduzirExpressaoMatematicaSML(rhs, tipoAlvoSML, gv, expressoesLocais, info);
             return varValorAntigoSML + "+" + rhsSML;
         } else if (opStr.equals("-=")) {
             String rhs = op.getOperandos().isEmpty() ? "0" : op.getOperandos().get(op.getOperandos().size() - 1);
-            String rhsSML = resolverOperandoParaSML(rhs, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+            String rhsSML = traduzirExpressaoMatematicaSML(rhs, tipoAlvoSML, gv, expressoesLocais, info);
             return varValorAntigoSML + "-" + rhsSML;
         } else {
             if (!op.getOperandos().isEmpty()) {
-                List<String> partes = new ArrayList<>();
-                for (String operando : op.getOperandos()) {
-                    partes.add(resolverOperandoParaSML(operando, mapearTipoPrimitivoSML(var.getTipo()), gv, info));
-                }
-                if (opStr.equals("=") || partes.size() == 1) {
-                    return partes.get(partes.size() - 1);
-                }
-                return String.join(opStr, partes);
+                String rhs = op.getOperandos().get(op.getOperandos().size() - 1);
+                return traduzirExpressaoMatematicaSML(rhs, tipoAlvoSML, gv, expressoesLocais, info);
             }
-            return resolverOperandoParaSML(opStr, mapearTipoPrimitivoSML(var.getTipo()), gv, info);
+            return traduzirExpressaoMatematicaSML(opStr, tipoAlvoSML, gv, expressoesLocais, info);
         }
     }
 
-    private String traduzirCondicaoParaSML(String exprSol, GerenciadorVariaveis gv, ListasInfo info) {
+    /**
+     * Tokeniza e traduz expressões matemáticas do Solidity (ex: "balanceA + half",
+     * "amount / 2")
+     * para Standard ML do CPN Tools, substituindo variáveis locais e convertendo
+     * "/" para "div" e "%" para "mod".
+     */
+    private String traduzirExpressaoMatematicaSML(
+            String exprSol,
+            String tipoPadraoSML,
+            GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
+            ListasInfo info) {
+
+        if (exprSol == null || exprSol.trim().isEmpty())
+            return "0";
+        String limpa = exprSol.trim();
+
+        // Se a expressão inteira já for uma variável conhecida ou local, retorna direto
+        if (expressoesLocais != null && expressoesLocais.containsKey(limpa)) {
+            return expressoesLocais.get(limpa);
+        }
+        if (gv.buscarVariavelSML(limpa) != null) {
+            return gv.buscarVariavelSML(limpa);
+        }
+
+        List<String> tokens = tokenizarExpressaoMatematica(limpa);
+        if (tokens.size() == 1) {
+            return resolverOperandoParaSML(tokens.get(0), tipoPadraoSML, gv, expressoesLocais, info);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (String tk : tokens) {
+            String t = tk.trim();
+            if (t.isEmpty())
+                continue;
+
+            switch (t) {
+                case "+":
+                case "-":
+                case "*":
+                    sb.append(" ").append(t).append(" ");
+                    break;
+                case "/":
+                    sb.append(" div ");
+                    break;
+                case "%":
+                    sb.append(" mod ");
+                    break;
+                case "(":
+                case ")":
+                    sb.append(t);
+                    break;
+                default:
+                    sb.append(resolverOperandoParaSML(t, tipoPadraoSML, gv, expressoesLocais, info));
+                    break;
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * Divide uma expressão matemática nos operadores (+, -, *, /, %, (, )),
+     * preservando intactos acessos indexados entre colchetes como
+     * "pesoEleitor[msg.sender]".
+     */
+    private List<String> tokenizarExpressaoMatematica(String expr) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder atual = new StringBuilder();
+        int nivelColchetes = 0;
+
+        for (int i = 0; i < expr.length(); i++) {
+            char c = expr.charAt(i);
+            if (c == '[') {
+                nivelColchetes++;
+                atual.append(c);
+            } else if (c == ']') {
+                if (nivelColchetes > 0)
+                    nivelColchetes--;
+                atual.append(c);
+            } else if (nivelColchetes == 0
+                    && (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '(' || c == ')')) {
+                if (atual.length() > 0) {
+                    tokens.add(atual.toString().trim());
+                    atual.setLength(0);
+                }
+                tokens.add(String.valueOf(c));
+            } else {
+                atual.append(c);
+            }
+        }
+        if (atual.length() > 0) {
+            tokens.add(atual.toString().trim());
+        }
+        return tokens;
+    }
+
+    private String traduzirCondicaoParaSML(
+            String exprSol,
+            GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
+            ListasInfo info) {
+
         String s = exprSol.trim();
         s = s.replace("==", "=").replace("!=", "<>");
 
+        // 1. Substitui variáveis locais caso estejam presentes na condição
+        if (expressoesLocais != null) {
+            List<Map.Entry<String, String>> locaisOrd = new ArrayList<>(expressoesLocais.entrySet());
+            locaisOrd.sort((a, b) -> Integer.compare(b.getKey().length(), a.getKey().length()));
+            for (Map.Entry<String, String> entry : locaisOrd) {
+                if (s.contains(entry.getKey())) {
+                    s = s.replace(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+
+        // 2. Substitui variáveis do GerenciadorVariaveis ordenadas da maior para a
+        // menor
         List<Map.Entry<String, String>> entradas = new ArrayList<>(gv.getMapaSolidityParaSML().entrySet());
         entradas.sort((a, b) -> Integer.compare(b.getKey().length(), a.getKey().length()));
 
@@ -666,8 +891,16 @@ public class RPCBuilder {
     }
 
     private String resolverOperandoParaSML(
-            String operando, String tipoPadraoSML, GerenciadorVariaveis gv, ListasInfo info) {
+            String operando,
+            String tipoPadraoSML,
+            GerenciadorVariaveis gv,
+            Map<String, String> expressoesLocais,
+            ListasInfo info) {
+
         String limpo = operando.trim();
+        if (expressoesLocais != null && expressoesLocais.containsKey(limpo)) {
+            return expressoesLocais.get(limpo);
+        }
         if (gv.buscarVariavelSML(limpo) != null) {
             return gv.buscarVariavelSML(limpo);
         }
@@ -676,7 +909,7 @@ public class RPCBuilder {
         }
         if (limpo.contains(".")) {
             String[] partes = limpo.split("\\.");
-            if (partes.length == 2 && !limpo.equals("msg.sender")) {
+            if (partes.length == 2 && !limpo.startsWith("msg.")) {
                 for (EnumSolidity en : info.getEnums()) {
                     if (en.getNome().equals(partes[0])) {
                         return partes[1];
@@ -712,6 +945,9 @@ public class RPCBuilder {
         if (tipoSolidity == null)
             return "UINT";
         String t = tipoSolidity.trim().toLowerCase();
+        if (t.contains("[")) {
+            t = t.substring(0, t.indexOf('[')).trim();
+        }
         if (t.startsWith("uint") || t.startsWith("int"))
             return "UINT";
         if (t.startsWith("address"))
@@ -720,11 +956,14 @@ public class RPCBuilder {
             return "BOOL";
         if (t.equals("string") || t.startsWith("bytes"))
             return "STRING";
-        return tipoSolidity.trim().toUpperCase();
+        return t.toUpperCase();
     }
 
     private String obterValorPadraoPrimitivo(String tipoSolidity, ListasInfo info) {
         String t = tipoSolidity.trim();
+        if (t.contains("[")) {
+            t = t.substring(0, t.indexOf('[')).trim();
+        }
         if (t.startsWith("uint") || t.startsWith("int"))
             return "0";
         if (t.equals("bool"))
@@ -759,13 +998,31 @@ public class RPCBuilder {
             if (op.getNomeFuncao().equals(nomeFuncao)) {
                 if (op.getVariavelDestino().contains("msg.sender")
                         || op.getOperador().contains("msg.sender")
-                        || op.getOperandos().contains("msg.sender")) {
+                        || op.getOperandos().toString().contains("msg.sender")) {
                     return true;
                 }
             }
         }
         for (Condicional cond : info.getCondicionais()) {
             if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains("msg.sender")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean funcaoUsaMsgValue(String nomeFuncao, ListasInfo info) {
+        for (OperacaoSolidity op : info.getOperacoes()) {
+            if (op.getNomeFuncao().equals(nomeFuncao)) {
+                if (op.getVariavelDestino().contains("msg.value")
+                        || op.getOperador().contains("msg.value")
+                        || op.getOperandos().toString().contains("msg.value")) {
+                    return true;
+                }
+            }
+        }
+        for (Condicional cond : info.getCondicionais()) {
+            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains("msg.value")) {
                 return true;
             }
         }
@@ -793,38 +1050,51 @@ public class RPCBuilder {
 
     private boolean pertenceAVariavel(String expressao, String nomeVar) {
         String e = expressao.trim();
-        return e.equals(nomeVar) || e.startsWith(nomeVar + "[");
+        if (e.equals(nomeVar) || e.startsWith(nomeVar + "["))
+            return true;
+        // Verifica se nomeVar aparece como token dentro de uma expressão aritmética
+        // (ex: "balanceA+half")
+        for (String tk : tokenizarExpressaoMatematica(e)) {
+            if (tk.equals(nomeVar) || tk.startsWith(nomeVar + "[")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private OperacaoSolidity buscarOperacaoVariavelNaFuncao(
             String nomeFuncao, String nomeVar, ListasInfo info) {
         for (OperacaoSolidity op : info.getOperacoes()) {
-            if (op.getNomeFuncao().equals(nomeFuncao)
-                    && pertenceAVariavel(op.getVariavelDestino(), nomeVar)) {
-                return op;
+            if (op.getNomeFuncao().equals(nomeFuncao)) {
+                String dest = op.getVariavelDestino().trim();
+                if (dest.equals(nomeVar) || dest.startsWith(nomeVar + "[")) {
+                    return op;
+                }
             }
         }
         return null;
     }
 
     private String descobrirExpressaoIndiceUsada(String nomeVar, String nomeFuncao, ListasInfo info) {
+        String padrao = nomeVar + "[";
         for (OperacaoSolidity op : info.getOperacoes()) {
             if (op.getNomeFuncao().equals(nomeFuncao)) {
-                if (op.getVariavelDestino().startsWith(nomeVar + "[")) {
-                    return extrairIndiceAcesso(op.getVariavelDestino());
+                if (op.getVariavelDestino().contains(padrao)) {
+                    int idx = op.getVariavelDestino().indexOf(padrao);
+                    return extrairIndiceAcesso(op.getVariavelDestino().substring(idx));
                 }
                 for (String oper : op.getOperandos()) {
-                    if (oper.startsWith(nomeVar + "[")) {
-                        return extrairIndiceAcesso(oper);
+                    if (oper.contains(padrao)) {
+                        int idx = oper.indexOf(padrao);
+                        return extrairIndiceAcesso(oper.substring(idx));
                     }
                 }
             }
         }
         for (Condicional cond : info.getCondicionais()) {
-            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains(nomeVar + "[")) {
-                int idx = cond.getExpressao().indexOf(nomeVar + "[");
-                String sub = cond.getExpressao().substring(idx);
-                return extrairIndiceAcesso(sub);
+            if (cond.getNomeFuncao().equals(nomeFuncao) && cond.getExpressao().contains(padrao)) {
+                int idx = cond.getExpressao().indexOf(padrao);
+                return extrairIndiceAcesso(cond.getExpressao().substring(idx));
             }
         }
         return "msg.sender";
@@ -892,7 +1162,7 @@ public class RPCBuilder {
                     ? "vazio"
                     : l.getInitialMarking();
             String tipoLugar = l.isOracle() ? " [ORACULO]" : "";
-            System.out.printf("  %-4s | Nome: %-20s | Cor: %-18s | Init: %-10s%s%n",
+            System.out.printf("  %-4s | Nome: %-20s | Cor: %-24s | Init: %-10s%s%n",
                     l.getId(), l.getName(), l.getColorSet(), marcacao, tipoLugar);
         }
 
