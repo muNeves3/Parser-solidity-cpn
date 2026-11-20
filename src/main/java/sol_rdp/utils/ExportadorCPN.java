@@ -7,6 +7,7 @@ import sol_rdp.rpc.GerenciadorVariaveis;
 import sol_rdp.rpc.RPCBuilder;
 import sol_rdp.solidity.EnumSolidity;
 import sol_rdp.solidity.ListasInfo;
+import sol_rdp.solidity.StructSolidity;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -21,7 +22,7 @@ public class ExportadorCPN {
     private int cpnIdCounter = 1412300000;
     private String nomeContrato = "";
 
-    public ExportadorCPN(String nomeContrato) {
+    public ExportadorCPN() {
         this.nomeContrato = nomeContrato;
     }
 
@@ -178,9 +179,17 @@ public class ExportadorCPN {
             Map<String, String> tipoListaPorVar,
             ListasInfo info) {
 
+        // Detecta automaticamente se a rede possui marcas temporizadas (@1, @2...)
+        boolean modoTemporal = false;
+        for (Lugar l : lugares) {
+            if (l.getInitialMarking() != null && l.getInitialMarking().contains("@")) {
+                modoTemporal = true;
+                break;
+            }
+        }
+
         out.println("    <globbox>");
 
-        // Bloco 1: Standard priorities
         out.println("      <block id=\"" + nextCpnId() + "\">");
         out.println("        <id>Standard priorities</id>");
         out.println("        <ml id=\"" + nextCpnId() + "\">val P_HIGH = 100;");
@@ -194,38 +203,44 @@ public class ExportadorCPN {
         out.println("        </ml>");
         out.println("      </block>");
 
-        // Bloco 2: Standard declarations
         out.println("      <block id=\"ID1\">");
         out.println("        <id>Standard declarations</id>");
-        escreverColorBase(out, "ID85042", "UNIT", "unit", "colset UNIT = unit;");
-        escreverColorBase(out, "ID4", "BOOL", "bool", null);
-        escreverColorBase(out, "ID3", "INT", "int", null);
-        escreverColorBase(out, nextCpnId(), "INTINF", "intinf", "colset INTINF = intinf;");
-        escreverColorBase(out, nextCpnId(), "TIME", "time", "colset TIME = time;");
-        escreverColorBase(out, nextCpnId(), "REAL", "real", "colset REAL = real;");
-        escreverColorBase(out, "ID5", "STRING", "string", null);
+        escreverColorBase(out, "ID85042", "UNIT", "unit", "colset UNIT = unit;", false);
+        escreverColorBase(out, "ID4", "BOOL", "bool", null, modoTemporal);
+        escreverColorBase(out, "ID3", "INT", "int", null, false);
+        escreverColorBase(out, nextCpnId(), "INTINF", "intinf", "colset INTINF = intinf;", false);
+        escreverColorBase(out, nextCpnId(), "TIME", "time", "colset TIME = time;", false);
+        escreverColorBase(out, nextCpnId(), "REAL", "real", "colset REAL = real;", false);
+        escreverColorBase(out, "ID5", "STRING", "string", null, modoTemporal);
 
-        // Tipos primitivos do Solidity
-        escreverColorBase(out, nextCpnId(), "ADDRESS", "string", "colset ADDRESS = string;");
-        escreverColorBase(out, nextCpnId(), "UINT", "int", "colset UINT = int;");
+        escreverColorBase(out, nextCpnId(), "ADDRESS", "string", "colset ADDRESS = string;", modoTemporal);
+        escreverColorBase(out, nextCpnId(), "UINT", "int", "colset UINT = int;", modoTemporal);
 
-        // Enums do contrato
         if (info != null && info.getEnums() != null) {
             for (EnumSolidity en : info.getEnums()) {
-                escreverColorEnum(out, en.getNome().toUpperCase(), en.getValores());
+                escreverColorEnum(out, en.getNome().toUpperCase(), en.getValores(), modoTemporal);
             }
         }
 
-        // Coleta primeiro todas as listas (<TI>_LIST) e depois todos os produtos (que
-        // podem depender das listas)
+        if (info != null && info.getStructs() != null) {
+            for (StructSolidity st : info.getStructs()) {
+                List<String> tiposCamposSML = new ArrayList<>();
+                for (String tCampo : st.getCampos().values()) {
+                    tiposCamposSML.add(RPCBuilder.mapearTipoPrimitivoSML(tCampo));
+                }
+                if (!tiposCamposSML.isEmpty()) {
+                    escreverColorProduct(out, st.getNome().toUpperCase(), tiposCamposSML, modoTemporal);
+                }
+            }
+        }
+
         Set<String> listasDeclaradas = new LinkedHashSet<>();
         Set<String> produtosSimples = new LinkedHashSet<>();
         Set<String> produtosDeListas = new LinkedHashSet<>();
 
         for (Lugar l : lugares) {
             String cs = l.getColorSet();
-            if (cs == null || cs.isEmpty())
-                continue;
+            if (cs == null || cs.isEmpty()) continue;
 
             if (cs.contains("x")) {
                 String[] partes = cs.split("x");
@@ -250,23 +265,19 @@ public class ExportadorCPN {
             listasDeclaradas.addAll(tipoListaPorVar.values());
         }
 
-        // 1º Declara produtos de tipos simples (ex: ADDRESSxUINT, UINTxUINT)
         for (String prod : produtosSimples) {
-            escreverColorProduct(out, prod, Arrays.asList(prod.split("x")));
+            escreverColorProduct(out, prod, Arrays.asList(prod.split("x")), modoTemporal);
         }
 
-        // 2º Declara tipos de listas (ex: ADDRESS_LIST, UINT_LIST)
         for (String tipoLista : listasDeclaradas) {
             String tipoElem = tipoLista.replace("_LIST", "");
             escreverColorList(out, tipoLista, tipoElem);
         }
 
-        // 3º Declara produtos de listas (ex: ADDRESS_LISTxUINT_LIST)
         for (String prodLista : produtosDeListas) {
-            escreverColorProduct(out, prodLista, Arrays.asList(prodLista.split("x")));
+            escreverColorProduct(out, prodLista, Arrays.asList(prodLista.split("x")), false);
         }
 
-        // 4º Declara todas as variáveis SML usadas nos arcos e nas guardas
         Map<String, String> todasVariaveis = new LinkedHashMap<>();
         if (gerenciadoresLocais != null) {
             for (GerenciadorVariaveis gv : gerenciadoresLocais.values()) {
@@ -354,25 +365,34 @@ public class ExportadorCPN {
         }
     }
 
-    private void escreverColorBase(PrintWriter out, String id, String nome, String tagTipo, String layout) {
+    private void escreverColorBase(PrintWriter out, String id, String nome, String tagTipo, String layout, boolean timed) {
         out.println("        <color id=\"" + id + "\">");
         out.println("          <id>" + nome + "</id>");
+        if (timed) {
+            out.println("          <timed/>");
+        }
         out.println("          <" + tagTipo + "/>");
         if (layout != null) {
-            out.println("          <layout>" + layout + "</layout>");
+            String layoutFinal = timed ? layout.replace(";", " timed;") : layout;
+            out.println("          <layout>" + layoutFinal + "</layout>");
+        } else if (timed) {
+            out.println("          <layout>colset " + nome + " = " + tagTipo + " timed;</layout>");
         }
         out.println("        </color>");
     }
-
-    private void escreverColorEnum(PrintWriter out, String nome, List<String> valores) {
+    private void escreverColorEnum(PrintWriter out, String nome, List<String> valores, boolean timed) {
         out.println("        <color id=\"" + nextCpnId() + "\">");
         out.println("          <id>" + nome + "</id>");
+        if (timed) {
+            out.println("          <timed/>");
+        }
         out.println("          <enum>");
         for (String v : valores) {
             out.println("            <id>" + v + "</id>");
         }
         out.println("          </enum>");
-        out.println("          <layout>colset " + nome + " = with " + String.join(" | ", valores) + ";</layout>");
+        String sufixo = timed ? " timed;" : ";";
+        out.println("          <layout>colset " + nome + " = with " + String.join(" | ", valores) + sufixo + "</layout>");
         out.println("        </color>");
     }
 
@@ -386,16 +406,19 @@ public class ExportadorCPN {
         out.println("        </color>");
     }
 
-    private void escreverColorProduct(PrintWriter out, String nomeProduto, List<String> componentes) {
+    private void escreverColorProduct(PrintWriter out, String nomeProduto, List<String> componentes, boolean timed) {
         out.println("        <color id=\"" + nextCpnId() + "\">");
         out.println("          <id>" + nomeProduto + "</id>");
+        if (timed) {
+            out.println("          <timed/>");
+        }
         out.println("          <product>");
         for (String c : componentes) {
             out.println("            <id>" + c + "</id>");
         }
         out.println("          </product>");
-        out.println("          <layout>colset " + nomeProduto + " = product " + String.join(" * ", componentes)
-                + ";</layout>");
+        String sufixo = timed ? " timed;" : ";";
+        out.println("          <layout>colset " + nomeProduto + " = product " + String.join(" * ", componentes) + sufixo + "</layout>");
         out.println("        </color>");
     }
 

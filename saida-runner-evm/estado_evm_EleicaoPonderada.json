@@ -1,0 +1,20 @@
+{
+  "contrato": "EleicaoPonderada",
+  "escalares": {
+    "admin": "0x704B68A7E01b17D84114d3C974F9F5A9feFDAe90"
+  },
+  "indexadas": {
+    "pesoEleitor": {
+      "0x704B68A7E01b17D84114d3C974F9F5A9feFDAe90": "4",
+      "0xC463c1FEaCe2E81d18ffeb7D7d045bE16bA4Cb0f": "2",
+      "0xb182d02Bc56Cef542f821E0C4Bb32f656dfe9f4a": "3"
+    },
+    "votosProposta": {
+      "0": "0",
+      "1": "0",
+      "2": "3",
+      "3": "4",
+      "4": "0"
+    }
+  }
+}

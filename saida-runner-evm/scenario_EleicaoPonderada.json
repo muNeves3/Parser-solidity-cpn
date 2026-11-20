@@ -1,0 +1,81 @@
+{
+  "accounts": {
+    "account{0}": "0x704B68A7E01b17D84114d3C974F9F5A9feFDAe90",
+    "account{1}": "0xC463c1FEaCe2E81d18ffeb7D7d045bE16bA4Cb0f",
+    "account{2}": "0xb182d02Bc56Cef542f821E0C4Bb32f656dfe9f4a"
+  },
+  "transactions": [
+    {
+      "timestamp": 1,
+      "record": {
+        "value": "0",
+        "parameters": [],
+        "type": "constructor",
+        "from": "account{0}"
+      }
+    },
+    {
+      "timestamp": 2,
+      "record": {
+        "value": "0",
+        "parameters": [
+          "0xb182d02Bc56Cef542f821E0C4Bb32f656dfe9f4a",
+          "3"
+        ],
+        "name": "definirPeso",
+        "type": "function",
+        "from": "account{0}"
+      }
+    },
+    {
+      "timestamp": 3,
+      "record": {
+        "value": "0",
+        "parameters": [
+          "2"
+        ],
+        "name": "votarProposta",
+        "type": "function",
+        "from": "account{2}"
+      }
+    },
+    {
+      "timestamp": 4,
+      "record": {
+        "value": "0",
+        "parameters": [
+          "0x704B68A7E01b17D84114d3C974F9F5A9feFDAe90",
+          "4"
+        ],
+        "name": "definirPeso",
+        "type": "function",
+        "from": "account{0}"
+      }
+    },
+    {
+      "timestamp": 5,
+      "record": {
+        "value": "0",
+        "parameters": [
+          "3"
+        ],
+        "name": "votarProposta",
+        "type": "function",
+        "from": "account{0}"
+      }
+    },
+    {
+      "timestamp": 6,
+      "record": {
+        "value": "0",
+        "parameters": [
+          "0xC463c1FEaCe2E81d18ffeb7D7d045bE16bA4Cb0f",
+          "2"
+        ],
+        "name": "definirPeso",
+        "type": "function",
+        "from": "account{0}"
+      }
+    }
+  ]
+}

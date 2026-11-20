@@ -6,65 +6,51 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.tree.ParseTree;
 import sol_rdp.antlr.SolidityLexer;
 import sol_rdp.antlr.SolidityParser;
+import sol_rdp.rpc.RPCBuilder;
 import sol_rdp.solidity.ListasInfo;
 import sol_rdp.utils.ExportadorCPN;
+import sol_rdp.utils.InjetorCenario;
 import sol_rdp.visitor.SolidityVisitor;
-//import sol_rdp.rpc.PNMLExporter;
-import sol_rdp.rpc.RPCBuilder;
-import sol_rdp.cpn.Lugar;
-import sol_rdp.cpn.Transicao;
-import sol_rdp.cpn.Arco;
-import java.util.List;
+
+import java.io.File;
 
 public class App {
     public static void main(String[] args) {
-        if (args.length == 0) {
-            System.err.println("Uso: java App <arquivo.sol>");
-            System.exit(1);
-        }
+        String caminhoContrato = args.length > 0 ? args[0] : "exemplos/Eleicao.sol";
+        String caminhoSaidaCpn = args.length > 1 ? args[1] : "saida/contrato_modelo.cpn";
+        String caminhoScenario = args.length > 2 ? args[2] : "saida/scenario.json";
 
         try {
-            CharStream input = CharStreams.fromFileName(args[0]);
+            // Fase 1: Análise Sintática e Semântica
+            CharStream input = CharStreams.fromFileName(caminhoContrato);
             SolidityLexer lexer = new SolidityLexer(input);
             CommonTokenStream tokens = new CommonTokenStream(lexer);
             SolidityParser parser = new SolidityParser(tokens);
             ParseTree tree = parser.sourceUnit();
 
-            System.out.println("\n========== FASE 1: ANÁLISE SINTÁTICA E SEMÂNTICA ==========");
             SolidityVisitor visitor = new SolidityVisitor();
-            visitor.visit(tree);
-            ListasInfo info = visitor.getListasInfo();
+            ListasInfo info = (ListasInfo) visitor.visit(tree);
 
-            if (info != null) {
-                info.exibirResumo();
+            // Fase 2: Construção da RPC
+            RPCBuilder builder = new RPCBuilder();
+            builder.construirRPC(info);
 
-                System.out.println("\n========== FASE 2: CONSTRUÇÃO DA RPC ==========");
-                RPCBuilder builder = new RPCBuilder();
-                builder.construirRPC(info);
-                builder.exibirResultados();
-
-                String contratoEntrada = args[0].split("/")[1];
-                String nomeContratoEntrada = contratoEntrada.substring(0, contratoEntrada.length() - 4);
-
-                // Exportar o resultado
-                ExportadorCPN exportador = new ExportadorCPN(args[0]);
-                exportador.exportar(
-                        builder.getLugares(),
-                        builder.getTransicoes(),
-                        builder.getArcos(),
-                        null, null, null, info, "saida/" + nomeContratoEntrada + ".cpn");
-
-            } else {
-                System.err.println("Erro: Análise retornou null");
-                System.exit(1);
+            // Etapa 2 do Pipeline: Injeção automática das marcas temporizadas (@1, @2...)
+            File arquivoScenario = new File(caminhoScenario);
+            if (arquivoScenario.exists()) {
+                InjetorCenario.aplicarCenario(arquivoScenario.getPath(), builder, info);
             }
 
-            System.out.println("\n========== ANÁLISE CONCLUÍDA COM SUCESSO ==========\n");
+            builder.exibirResultados();
+
+            // Exportação para XML do CPN Tools (ativa 'timed' automaticamente se houver @t)
+            ExportadorCPN exportador = new ExportadorCPN();
+            exportador.exportar(builder, info, caminhoSaidaCpn);
+            System.out.println("Arquivo CPN exportado com sucesso em: " + caminhoSaidaCpn);
 
         } catch (Exception e) {
-            System.err.println("Erro durante análise: " + e.getMessage());
+            System.err.println("Erro durante execucao: " + e.getMessage());
             e.printStackTrace();
-            System.exit(1);
         }
     }
 }
