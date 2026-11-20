@@ -18,9 +18,11 @@ public class InjetorCenario {
 
     /**
      * Lê o arquivo scenario.json gerado pela Etapa 1 (ou pelo Recorder do Remix)
-     * e injeta as marcas temporizadas (@1, @2, @3... com +++) nos lugares oráculo da RPC.
+     * e injeta as marcas temporizadas (@1, @2, @3... com +++) nos lugares oráculo
+     * da RPC.
      */
-    public static void aplicarCenario(String caminhoScenarioJson, RPCBuilder builder, ListasInfo info) throws IOException {
+    public static void aplicarCenario(String caminhoScenarioJson, RPCBuilder builder, ListasInfo info)
+            throws IOException {
         String json = new String(Files.readAllBytes(Paths.get(caminhoScenarioJson)));
 
         // 1. Mapeia "account{0}": "0x..." -> endereço real
@@ -37,19 +39,21 @@ public class InjetorCenario {
             filasMarcasPorLugar.put(l.getName(), new ArrayList<>());
         }
 
-        // 2. Percorre cada transação gravada no scenario.json
-        Matcher mTx = Pattern.compile(
-                "\"timestamp\"\\s*:\\s*(\\d+).*?\"record\"\\s*:\\s*\\{(.*?)\\}",
-                Pattern.DOTALL
-        ).matcher(json);
+        // 2. Percorre cada transação gravada no scenario.json usando contagem
+        // balanceada de chaves
+        Matcher mHeader = Pattern.compile("\"timestamp\"\\s*:\\s*(\\d+)\\s*,\\s*\"record\"\\s*:\\s*\\{", Pattern.DOTALL)
+                .matcher(json);
 
         int contadorFallback = 0;
-        while (mTx.find()) {
+        while (mHeader.find()) {
             contadorFallback++;
-            int passo = Integer.parseInt(mTx.group(1));
-            if (passo <= 0) passo = contadorFallback;
+            int passo = Integer.parseInt(mHeader.group(1));
+            if (passo <= 0)
+                passo = contadorFallback;
 
-            String blocoRecord = mTx.group(2);
+            int indiceAbreChave = mHeader.end() - 1;
+            String blocoRecord = extrairBlocoBalanceado(json, indiceAbreChave);
+
             String tipo = extrairCampoString(blocoRecord, "type");
             String nomeFunc = extrairCampoString(blocoRecord, "name");
             String fromRaw = extrairCampoString(blocoRecord, "from");
@@ -91,7 +95,8 @@ public class InjetorCenario {
             // C) Marca em msg.value (se a transição tiver arco vindo de msg.value)
             if (transicaoConsomeDeLugar(nomeTransicaoRPC, "msg.value", builder)) {
                 String valLimpo = (valueRaw == null || valueRaw.isEmpty()) ? "0" : valueRaw.replaceAll("[^0-9]", "");
-                if (valLimpo.isEmpty()) valLimpo = "0";
+                if (valLimpo.isEmpty())
+                    valLimpo = "0";
                 filasMarcasPorLugar.get("msg.value").add("1`" + valLimpo + "@" + passo);
             }
         }
@@ -111,6 +116,35 @@ public class InjetorCenario {
                 + contadorFallback + ") distribuidas em " + lugaresPreenchidos + " lugares.");
     }
 
+    /**
+     * Extrai o conteúdo interno de um objeto JSON {...} respeitando chaves
+     * aninhadas
+     * e ignorando chaves dentro de strings (como "account{0}").
+     */
+    private static String extrairBlocoBalanceado(String texto, int indiceAbreChave) {
+        if (indiceAbreChave < 0 || indiceAbreChave >= texto.length() || texto.charAt(indiceAbreChave) != '{') {
+            return "";
+        }
+        int profundidade = 0;
+        boolean emAspas = false;
+        for (int i = indiceAbreChave; i < texto.length(); i++) {
+            char c = texto.charAt(i);
+            if (c == '"' && (i == 0 || texto.charAt(i - 1) != '\\')) {
+                emAspas = !emAspas;
+            } else if (!emAspas) {
+                if (c == '{') {
+                    profundidade++;
+                } else if (c == '}') {
+                    profundidade--;
+                    if (profundidade == 0) {
+                        return texto.substring(indiceAbreChave + 1, i);
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
     private static boolean transicaoConsomeDeLugar(String nomeTransicao, String nomeLugar, RPCBuilder builder) {
         String idLugar = null;
         for (Lugar l : builder.getLugares()) {
@@ -126,7 +160,8 @@ public class InjetorCenario {
                 break;
             }
         }
-        if (idLugar == null || idTrans == null) return false;
+        if (idLugar == null || idTrans == null)
+            return false;
 
         for (Arco a : builder.getArcos()) {
             if (a.getSourceId().equals(idLugar) && a.getTargetId().equals(idTrans)) {
